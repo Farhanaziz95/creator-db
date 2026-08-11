@@ -31,13 +31,109 @@ This clears the AI queue automatically every few minutes.
    - Add arguments: `C:\xampp\htdocs\creator-db\jobs\process_niche_queue.php`
 4. Save. It'll now run quietly in the background, pulling ~10 profiles per run through the free OpenRouter models (keyword-matched profiles never touch this — only the leftovers with no business category and no keyword match).
 
-## ⚠️ IN PROGRESS — Round 28 (incomplete, handed off mid-build)
+## Round 30: Flozy deep-link, bulk-tab-open bug fix, Opportunity re-confirmed
 
-This chat hit its practical limit and is being continued in a new Claude
-Project. Here's the exact state of what you asked for, so nothing gets
-silently lost or redone:
+### Direct link to the Flozy lead
+Added — no more hunting through the pipeline to find a creator. Confirmed
+against a real lead URL (`https://dashboard.flozy.com/leads/detail/538145`)
+rather than guessed.
 
-### ✅ Done
+- `config/flozy.php` — new `dashboard_base_url` key (separate from the
+  API's `base_url`, which is a different backend host entirely).
+- `api/profiles.php` — `fl.flozy_lead_id` is now selected on the Flozy
+  view so the frontend has it to build the link.
+- **🔗 button** next to the Pipeline Stage badge (visible directly on the
+  row, no dropdown needed — this was the actual point of "it's a
+  hassle") plus a duplicate entry in the ⋮ action menu for anyone who
+  prefers that path. Opens `{dashboard_base_url}/leads/detail/{flozy_lead_id}`
+  in a new tab.
+
+### Fixed: "Open Selected in New Tabs" opening unselected profiles
+Root cause found — this was a real bug, not a misunderstanding. Two
+compounding issues in `public/index.php`:
+
+1. `doOpenTabs()` looped over the entire `selectedUsernames` Map instead
+   of the current `selectedIds` Set, so it opened *every username ever
+   selected*, not just the ones currently checked.
+2. `switchView()` (running when you click Active/Archived/Future/Flozy)
+   cleared `selectedIds` on tab switch but never cleared
+   `selectedUsernames` — so leftover entries from a previous tab sat in
+   that Map indefinitely and got opened the next time you used the
+   button, even from a completely different tab.
+
+Both fixed: `doOpenTabs()` now only opens usernames for ids present in
+`selectedIds`, and `switchView()` now clears both. Selecting profiles on
+one tab, switching tabs, and clicking "Open Selected" elsewhere no longer
+drags old selections along.
+
+### Opportunity auto-creation — already built (Round 28), re-confirmed here
+This was raised again, so to be clear: **this already exists** and ships
+in this zip — nothing new needed. `includes/flozy_client.php`'s
+`push_profile_to_flozy()` creates a Lead *and* an Opportunity in the same
+push. If you haven't seen it working: the push status message (shown
+after clicking "Send to Flozy," single or bulk) will explicitly say
+`Opportunity not created: ...` with the real reason if it failed — the
+most common cause is `default_opportunity_stage_name` in
+`config/flozy.php` (currently `'New Lead'`) not exactly matching a real
+stage name in your Flozy pipeline. If you see that error, paste the exact
+message and I can fix the config value with you.
+
+## Round 29: Outreach tracking — finished (picks up where Round 28 left off)
+
+Round 28 built the migration and the toggle endpoint for the outreach
+flag but never wired any of it into the frontend. This round finishes it —
+nothing new stored beyond what Round 28 already migrated.
+
+- **Toggle + badge**, Sent to Flozy tab only — new **Outreach** column
+  (between Pipeline Stage and Actions). Shows a green "✅ Contacted" badge
+  with an ↩️ undo button once marked, or a "Mark Outreached" button if not.
+- **Filter dropdown** — All / Contacted / Not Contacted / Ghosted (no
+  reply), shown only on the Sent to Flozy tab (hidden and reset to "All"
+  the moment you switch to any other tab, since the filter has no meaning
+  there). "Ghosted" is not a separate status field — it means
+  `outreached_at` is set AND the synced Flozy pipeline stage is literally
+  named "Ghosted" (that's a real stage name in this pipeline, per the
+  round 15/22 notes above, not a guessed enum value). Since stage data
+  only updates when you click 🔄 or "Sync All Pipeline Stages", the
+  Ghosted filter is only as fresh as your last sync.
+- **`api/profiles.php`** — `outreach_status` is now whitelisted
+  server-side (`contacted` / `not_contacted` / `ghosted` / empty) before
+  being appended as a literal SQL fragment (it drives which fragment gets
+  used, not a bound value, so it's validated with `in_array()` first
+  rather than parameterized) — applied only on the `flozy` view.
+  `fl.outreached_at` is now selected so the frontend has something to
+  render.
+- **`api/toggle_outreach.php`** — marking a lead outreached now also logs
+  a completed task in Flozy (title "Outreach Sent", status `3`/completed)
+  via `POST /tasks` — the same already-confirmed endpoint
+  `includes/flozy_client.php` uses elsewhere in this project, not a
+  guessed notes endpoint. **Undoing does NOT touch Flozy** — only the
+  local flag changes, since there's nothing meaningful to retract on
+  Flozy's side for an undo.
+- If the Flozy task-logging call fails, the local toggle still succeeds —
+  it's never rolled back over a Flozy-side hiccup. You just get a warning
+  toast (`flozy_task_error` in the response) telling you the Flozy record
+  didn't land, so you know to check.
+
+**Heads up on table columns:** a new column was inserted between Pipeline
+Stage and Actions. DataTables' `stateSave` remembers column
+visibility/order by index across reloads — if your browser has state
+cached from before this round, column visibility may reset once on first
+load after updating. Nothing is lost; just re-toggle anything you'd
+hidden via "👁 Columns."
+
+### ❌ Still not started (carried over from Round 28)
+- **Direct link to Flozy lead** — needs you to check Flozy's real
+  lead-detail URL pattern first (open a lead in Flozy, copy the URL) —
+  can't guess this one, same policy as everything else API/URL-related.
+- **Table-refresh bug investigation** — audited the functions that could
+  be found and they already had the correct `reload(null, false)` fix
+  applied, so the bug (if still happening) needs a specific repro from
+  you: which button, which tab, exactly what doesn't update — to actually
+  pin it down rather than guess broadly again.
+
+## Round 28: Opportunity auto-create, progress badge colors, bulk tab-open
+
 - **Auto-create Opportunity on Flozy push** — `includes/flozy_client.php`
   now creates both the Lead AND an Opportunity (was Lead-only before,
   meaning nothing showed up in your Pipeline until a manual step in
@@ -51,28 +147,10 @@ silently lost or redone:
 - **"Open Selected in New Tabs"** — new bulk-action button (works on every
   tab), opens each selected profile's Instagram URL in a new tab. Warns
   first if opening more than 10 (browser popup-blocker territory).
-- **Outreach flag — migration + endpoint only** —
+- **Outreach flag migration + endpoint** —
   `sql/migration_023_outreach_flag.sql` (adds `flozy_leads.outreached_at`)
-  and `api/toggle_outreach.php` are built and functional standalone, but
-  **NOT wired into the frontend at all yet** — no toggle button, no badge,
-  no filter dropdown.
-
-### 🚧 Started, not finished
-- **Outreach filter in `api/profiles.php`** — only this one line exists:
-  `$outreachFilter = $_GET['outreach_status'] ?? '';` — the actual SQL
-  filter logic, the `outreached_at` SELECT column, and everything on the
-  frontend (filter dropdown, toggle button, visual badge) still needs
-  building. This was the exact point of interruption.
-
-### ❌ Not started
-- **Direct link to Flozy lead** — needs you to check Flozy's real lead-detail
-  URL pattern first (open a lead in Flozy, copy the URL) — can't guess this
-  one, same policy as everything else API/URL-related this session.
-- **Table-refresh bug investigation** — audited the functions I could find
-  and they already had the correct `reload(null, false)` fix applied, so
-  the bug (if still happening) needs a specific repro from you: which
-  button, which tab, exactly what doesn't update — to actually pin it down
-  rather than guess broadly again.
+  and `api/toggle_outreach.php` were built this round; wiring them into
+  the frontend was finished in **Round 29** above.
 
 ## Round 27: Content Studio — separate feature, own tab
 

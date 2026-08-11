@@ -7,7 +7,11 @@ $maxFollowers  = ($_GET['max_followers'] ?? '') !== '' ? (int) $_GET['max_follow
 $minEngagement = isset($_GET['min_engagement']) ? (float) $_GET['min_engagement'] : 0;
 $maxEngagement = ($_GET['max_engagement'] ?? '') !== '' ? (float) $_GET['max_engagement'] : 999999;
 $nicheId       = ($_GET['niche_id'] ?? '') !== '' ? (int) $_GET['niche_id'] : null;
-$outreachFilter = $_GET['outreach_status'] ?? ''; // 'contacted' | 'not_contacted' | '' (all) — only meaningful on flozy view
+// 'contacted' | 'not_contacted' | 'ghosted' | '' (all) — only meaningful on flozy view.
+// Whitelisted rather than bound as a param since it drives which literal SQL
+// fragment gets appended, not a value substituted into the query.
+$outreachFilterRaw = $_GET['outreach_status'] ?? '';
+$outreachFilter = in_array($outreachFilterRaw, ['contacted', 'not_contacted', 'ghosted'], true) ? $outreachFilterRaw : '';
 $search        = $_GET['search']['value'] ?? '';
 $start         = (int) ($_GET['start'] ?? 0);
 $length        = (int) ($_GET['length'] ?? 25);
@@ -59,6 +63,17 @@ if ($view === 'flozy') {
         JOIN flozy_leads fl ON fl.profile_id = p.id
         WHERE 1=1
     ";
+    // Outreach filter — 'ghosted' means contacted but the Flozy pipeline
+    // stage is literally named 'Ghosted' (the real stage name in this
+    // pipeline, confirmed in round 15/22 notes) — not a guess at a status
+    // enum, an actual stage-name match.
+    if ($outreachFilter === 'contacted') {
+        $baseQuery .= " AND fl.outreached_at IS NOT NULL ";
+    } elseif ($outreachFilter === 'not_contacted') {
+        $baseQuery .= " AND fl.outreached_at IS NULL ";
+    } elseif ($outreachFilter === 'ghosted') {
+        $baseQuery .= " AND fl.outreached_at IS NOT NULL AND fl.current_stage = 'Ghosted' ";
+    }
 } else {
     $statusValue = in_array($view, ['archived', 'future'], true) ? $view : 'active';
     $baseQuery = "
@@ -122,10 +137,12 @@ try {
     }
     if ($view === 'flozy') {
         $extraSelect .= "
+            , fl.flozy_lead_id
             , fl.pushed_at AS flozy_pushed_at
             , fl.current_stage
             , fl.current_stage_tag
             , fl.stage_synced_at
+            , fl.outreached_at
         ";
     }
 

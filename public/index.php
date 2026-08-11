@@ -1,3 +1,8 @@
+<?php
+// Only needed here to build a direct "open in Flozy" link client-side —
+// nothing else on this page touches Flozy's API directly.
+$flozyDashboardConfig = require __DIR__ . '/../config/flozy.php';
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -482,6 +487,14 @@
         <button class="tab-btn" id="tabArchived" onclick="switchView('archived')">Archived</button>
         <button class="tab-btn" id="tabFuture" onclick="switchView('future')">Future</button>
         <button class="tab-btn" id="tabFlozy" onclick="switchView('flozy')">Sent to Flozy</button>
+        <span id="outreachFilterWrap" style="display:none; align-self:center;">
+            <select id="outreachFilterSelect" onchange="table.ajax.reload(null, false)" style="width:180px;">
+                <option value="">All (outreach status)</option>
+                <option value="contacted">Contacted</option>
+                <option value="not_contacted">Not Contacted</option>
+                <option value="ghosted">Ghosted (no reply)</option>
+            </select>
+        </span>
         <div class="action-menu" style="margin-left:auto; align-self:center;">
             <button class="action-menu-btn" onclick="toggleColumnMenu()">👁 Columns</button>
             <div class="action-menu-content" id="columnToggleMenu" style="min-width:180px; max-height:340px; overflow-y:auto;"></div>
@@ -514,6 +527,7 @@
                 <th>Notes</th>
                 <th>Progress</th>
                 <th>Pipeline Stage</th>
+                <th>Outreach</th>
                 <th>Actions</th>
             </tr>
         </thead>
@@ -615,8 +629,16 @@ function openSelectedInNewTabs() {
     }
 }
 function doOpenTabs() {
-    selectedUsernames.forEach(username => {
-        window.open(`https://instagram.com/${username}`, '_blank');
+    // Iterate selectedIds (the source of truth for "currently selected"),
+    // not selectedUsernames directly — selectedUsernames can carry stale
+    // entries left over from a previous tab, and opening straight off that
+    // Map was what caused unselected/leftover profiles from other tabs to
+    // pop open alongside the ones actually checked right now.
+    selectedIds.forEach(id => {
+        const username = selectedUsernames.get(id);
+        if (username) {
+            window.open(`https://instagram.com/${username}`, '_blank');
+        }
     });
 }
 
@@ -734,6 +756,18 @@ async function bulkRemoveFromFlozySelected() {
 let table;
 let currentView = 'active';
 
+// Built server-side from config/flozy.php so this stays in sync with the
+// backend's config instead of being a second hardcoded copy.
+const FLOZY_DASHBOARD_BASE_URL = '<?= addslashes(rtrim($flozyDashboardConfig['dashboard_base_url'], '/')) ?>';
+
+function openInFlozy(flozyLeadId) {
+    if (!flozyLeadId) {
+        notifyWarning('No Flozy lead ID on record for this profile.');
+        return;
+    }
+    window.open(`${FLOZY_DASHBOARD_BASE_URL}/leads/detail/${flozyLeadId}`, '_blank');
+}
+
 // Industry benchmark: what counts as "good" engagement depends heavily on
 // follower count. Ordered by upper bound of each follower bracket.
 const engagementBenchmarks = [
@@ -838,6 +872,7 @@ function initTable() {
                 d.min_engagement = document.getElementById('minEngagement').value || 0;
                 d.max_engagement = document.getElementById('maxEngagement').value || '';
                 d.niche_id = document.getElementById('nicheFilter').value || '';
+                d.outreach_status = document.getElementById('outreachFilterSelect').value || '';
                 d.view = currentView;
             }
         },
@@ -912,12 +947,24 @@ function initTable() {
                 orderable: false,
                 render: function (row) {
                     if (currentView !== 'flozy') return '';
+                    const openBtn = ` <button class="small ghost" onclick="openInFlozy(${row.flozy_lead_id})" title="Open this lead directly in Flozy">🔗</button>`;
                     if (!row.current_stage) {
-                        return '<span style="color:#666; font-size:12px; white-space:nowrap;">not synced</span> <button class="small ghost" onclick="syncFlozyStage(' + row.id + ')" title="Pull latest stage from Flozy">🔄</button>';
+                        return '<span style="color:#666; font-size:12px; white-space:nowrap;">not synced</span> <button class="small ghost" onclick="syncFlozyStage(' + row.id + ')" title="Pull latest stage from Flozy">🔄</button>' + openBtn;
                     }
                     const tagColors = { won: 'rgba(34,197,94,0.25)', lost: 'rgba(248,113,113,0.25)', active: 'rgba(96,165,250,0.2)' };
                     const bg = tagColors[row.current_stage_tag] || 'rgba(96,165,250,0.2)';
-                    return `<span class="badge" style="background:${bg}; white-space:nowrap;">${row.current_stage}</span> <button class="small ghost" onclick="syncFlozyStage(${row.id})" title="Pull latest stage from Flozy">🔄</button>`;
+                    return `<span class="badge" style="background:${bg}; white-space:nowrap;">${row.current_stage}</span> <button class="small ghost" onclick="syncFlozyStage(${row.id})" title="Pull latest stage from Flozy">🔄</button>${openBtn}`;
+                }
+            },
+            {
+                data: null,
+                orderable: false,
+                render: function (row) {
+                    if (currentView !== 'flozy') return '';
+                    if (row.outreached_at) {
+                        return `<span class="badge" style="background:rgba(34,197,94,0.22); white-space:nowrap;" title="Outreached at ${row.outreached_at}">✅ Contacted</span> <button class="small ghost" onclick="toggleOutreach(${row.id}, false)" title="Undo — marks as not yet contacted again">↩️</button>`;
+                    }
+                    return `<span style="color:#666; font-size:12px; white-space:nowrap;">not contacted</span> <button class="small" style="background:#5B7BFF;" onclick="toggleOutreach(${row.id}, true)">Mark Outreached</button>`;
                 }
             },
             {
@@ -967,6 +1014,7 @@ function initTable() {
                             <button class="small" style="background:#5B7BFF;" onclick="runVerification(${row.id})">🔍 Verify+Personalize</button>
                             <button class="action-menu-btn" onclick="toggleActionMenu(${row.id})">⋮</button>
                             <div class="action-menu-content" id="menu-${row.id}">
+                                <button onclick="openInFlozy(${row.flozy_lead_id})">🔗 Open in Flozy</button>
                                 <button onclick="openGrowthChart(${row.id}, '${row.username}')">📈 Growth Chart</button>
                                 <button onclick="triggerGameplanUpload(${row.id})">📄 Upload Gameplan</button>
                                 <button onclick="rerunAiOnly(${row.id})">🔁 Retry AI Only</button>
@@ -995,7 +1043,12 @@ function switchView(view) {
     document.getElementById('tabArchived').classList.toggle('active', view === 'archived');
     document.getElementById('tabFuture').classList.toggle('active', view === 'future');
     document.getElementById('tabFlozy').classList.toggle('active', view === 'flozy');
+    document.getElementById('outreachFilterWrap').style.display = (view === 'flozy') ? 'inline-block' : 'none';
+    if (view !== 'flozy') {
+        document.getElementById('outreachFilterSelect').value = ''; // reset — filter is meaningless outside Flozy tab
+    }
     selectedIds.clear();
+    selectedUsernames.clear(); // was missing — left stale username entries behind on every tab switch, which is what let "Open Selected in New Tabs" open leftover profiles from a previous tab
     document.getElementById('selectAllVisible').checked = false;
     updateBulkActionBar();
     table.ajax.reload(); // switching tabs is a real context change, page 1 makes sense here
@@ -1013,6 +1066,24 @@ function syncFlozyStage(profileId) {
             table.ajax.reload(null, false);
         })
         .catch(err => notifyError('Stage sync failed.', err));
+}
+
+function toggleOutreach(profileId, outreached) {
+    fetch('../api/toggle_outreach.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile_id: profileId, outreached: outreached })
+    })
+        .then(r => r.json())
+        .then(res => {
+            if (!res.success) { notifyError('Could not update outreach status.', res); return; }
+            if (res.flozy_task_error) {
+                notifyWarning('Marked as outreached, but logging it in Flozy failed.', res.flozy_task_error);
+            } else {
+                notifyInfo(outreached ? 'Marked as outreached.' : 'Outreach undone.');
+            }
+            table.ajax.reload(null, false);
+        })
+        .catch(err => notifyError('Could not update outreach status.', err));
 }
 
 function syncAllFlozyStages() {
@@ -1531,6 +1602,7 @@ const toggleableColumns = [
     { idx: 13, label: 'Notes' },
     { idx: 14, label: 'Progress' },
     { idx: 15, label: 'Pipeline Stage' },
+    { idx: 16, label: 'Outreach' },
 ];
 
 function buildColumnToggleMenu() {
