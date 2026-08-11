@@ -38,8 +38,15 @@ Added — no more hunting through the pipeline to find a creator. Confirmed
 against a real lead URL (`https://dashboard.flozy.com/leads/detail/538145`)
 rather than guessed.
 
-- `config/flozy.php` — new `dashboard_base_url` key (separate from the
-  API's `base_url`, which is a different backend host entirely).
+- **No config edit needed, ever, for the normal case.** Flozy's dashboard
+  domain is a fixed, non-secret constant, so it's baked directly into
+  `public/index.php` as a default (`https://dashboard.flozy.com`) instead
+  of living only in `config/flozy.php`. That file holds your real API
+  key, so — correctly — it doesn't get overwritten by a fresh zip, which
+  means anything that *only* lived there would need a manual add on every
+  update. `config/flozy.php` still has a `dashboard_base_url` line
+  (commented out) purely as an optional override, e.g. if you're ever on
+  a white-labeled Flozy domain — nothing to do with it otherwise.
 - `api/profiles.php` — `fl.flozy_lead_id` is now selected on the Flozy
   view so the frontend has it to build the link.
 - **🔗 button** next to the Pipeline Stage badge (visible directly on the
@@ -47,6 +54,21 @@ rather than guessed.
   hassle") plus a duplicate entry in the ⋮ action menu for anyone who
   prefers that path. Opens `{dashboard_base_url}/leads/detail/{flozy_lead_id}`
   in a new tab.
+
+**Bug this caused, now fixed:** the first cut of this feature read
+`dashboard_base_url` straight out of `config/flozy.php` with no fallback.
+On a live install where your real config file (correctly) hadn't picked
+up that new key yet, PHP threw a deprecation notice for passing `null`
+into `rtrim()` — and that notice printed **directly into the middle of
+the page's `<script>` tag**, corrupting the JavaScript and breaking the
+entire script. That's why `switchView` looked "not defined" and the table
+showed no data, even though none of the table code itself had changed.
+Moving the default into the code (as described above) fixes this at the
+root rather than just patching around it — there's no longer a "missing
+config key" state for this value to be in. Worth remembering for future
+rounds: any *non-secret* constant read into inline PHP-in-`<script>`
+output belongs in code with a real default, not solely in a config file
+that's expected to lag behind the code that reads it.
 
 ### Fixed: "Open Selected in New Tabs" opening unselected profiles
 Root cause found — this was a real bug, not a misunderstanding. Two

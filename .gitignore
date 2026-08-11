@@ -1,2 +1,5 @@
 storage/
 /config/API Keys.txt
+/config/flozy.php
+/config/gemini.php
+/config/openrouter.php

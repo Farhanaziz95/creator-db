@@ -1,7 +1,15 @@
 <?php
 // Only needed here to build a direct "open in Flozy" link client-side —
 // nothing else on this page touches Flozy's API directly.
+// Defaults to Flozy's actual dashboard domain right here in code, NOT
+// just in config/flozy.php — that file holds a real API key, so config
+// files in this project don't get overwritten on every zip update, and a
+// non-secret constant like this shouldn't require a manual edit just to
+// work. config/flozy.php's 'dashboard_base_url' is only consulted as an
+// OPTIONAL override, e.g. for a white-labeled Flozy domain — nobody needs
+// to touch it for the normal case.
 $flozyDashboardConfig = require __DIR__ . '/../config/flozy.php';
+$flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_url'] ?? 'https://dashboard.flozy.com'), '/');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -758,7 +766,7 @@ let currentView = 'active';
 
 // Built server-side from config/flozy.php so this stays in sync with the
 // backend's config instead of being a second hardcoded copy.
-const FLOZY_DASHBOARD_BASE_URL = '<?= addslashes(rtrim($flozyDashboardConfig['dashboard_base_url'], '/')) ?>';
+const FLOZY_DASHBOARD_BASE_URL = '<?= addslashes($flozyDashboardBaseUrl) ?>';
 
 function openInFlozy(flozyLeadId) {
     if (!flozyLeadId) {
