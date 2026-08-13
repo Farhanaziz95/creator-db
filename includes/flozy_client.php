@@ -192,6 +192,16 @@ function push_profile_to_flozy(PDO $pdo, int $profileId): array
             ]);
             if (!$oppResult['success']) {
                 $opportunityError = $oppResult['error'];
+            } else {
+                // Store the Opportunity's own ID (confirmed as data.id per
+                // Flozy's real API docs) — separate from flozy_lead_id,
+                // and required to ever update this Opportunity's stage later
+                // (Round 31's "Move Stage" feature).
+                $opportunityId = $oppResult['data']['id'] ?? null;
+                if ($opportunityId) {
+                    $stmt = $pdo->prepare("UPDATE flozy_leads SET flozy_opportunity_id = ? WHERE profile_id = ?");
+                    $stmt->execute([$opportunityId, $profileId]);
+                }
             }
         } else {
             $opportunityError = "No pipeline stage named '{$config['default_opportunity_stage_name']}' found — check config/flozy.php matches a real stage name.";

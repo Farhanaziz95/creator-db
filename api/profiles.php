@@ -12,6 +12,14 @@ $nicheId       = ($_GET['niche_id'] ?? '') !== '' ? (int) $_GET['niche_id'] : nu
 // fragment gets appended, not a value substituted into the query.
 $outreachFilterRaw = $_GET['outreach_status'] ?? '';
 $outreachFilter = in_array($outreachFilterRaw, ['contacted', 'not_contacted', 'ghosted'], true) ? $outreachFilterRaw : '';
+// Exact pipeline stage name to filter to, or '' for all — only meaningful
+// on flozy view. This one IS bound as a param (unlike outreachFilter
+// above) since it's an arbitrary real value, not one of a small fixed set
+// of literal SQL fragments.
+$stageFilter = trim($_GET['stage_filter'] ?? '');
+// Whitelisted the same way as outreachFilter — only these 3 windows are offered.
+$outreachDaysRaw = $_GET['outreach_days'] ?? '';
+$outreachDays = in_array($outreachDaysRaw, ['7', '30', '90'], true) ? (int) $outreachDaysRaw : null;
 $search        = $_GET['search']['value'] ?? '';
 $start         = (int) ($_GET['start'] ?? 0);
 $length        = (int) ($_GET['length'] ?? 25);
@@ -74,6 +82,17 @@ if ($view === 'flozy') {
     } elseif ($outreachFilter === 'ghosted') {
         $baseQuery .= " AND fl.outreached_at IS NOT NULL AND fl.current_stage = 'Ghosted' ";
     }
+    // Pipeline stage filter — combines (AND) with the outreach status
+    // filter above, e.g. "Contacted" + "Discovery Call Booked" together.
+    if ($stageFilter !== '') {
+        $baseQuery .= " AND fl.current_stage = :stageFilter ";
+    }
+    // Outreach date-range filter — a NULL outreached_at never satisfies
+    // this comparison, so pairing this with "Not Contacted" naturally
+    // yields zero rows rather than needing a separate guard.
+    if ($outreachDays !== null) {
+        $baseQuery .= " AND fl.outreached_at >= DATE_SUB(NOW(), INTERVAL :outreachDays DAY) ";
+    }
 } else {
     $statusValue = in_array($view, ['archived', 'future'], true) ? $view : 'active';
     $baseQuery = "
@@ -97,7 +116,7 @@ if ($search !== '') {
     $baseQuery .= " AND (p.username LIKE :search1 OR p.full_name LIKE :search2 OR n.name LIKE :search3) ";
 }
 
-function bind_common(PDOStatement $stmt, string $view, bool $applyThresholds, int $minFollowers, int $maxFollowers, float $minEngagement, float $maxEngagement, ?int $nicheId, string $search): void
+function bind_common(PDOStatement $stmt, string $view, bool $applyThresholds, int $minFollowers, int $maxFollowers, float $minEngagement, float $maxEngagement, ?int $nicheId, string $search, string $stageFilter = '', ?int $outreachDays = null): void
 {
     if ($view !== 'flozy') {
         $statusValue = in_array($view, ['archived', 'future'], true) ? $view : 'active';
@@ -107,6 +126,13 @@ function bind_common(PDOStatement $stmt, string $view, bool $applyThresholds, in
             $stmt->bindValue(':maxFollowers', $maxFollowers);
             $stmt->bindValue(':minEngagement', $minEngagement);
             $stmt->bindValue(':maxEngagement', $maxEngagement);
+        }
+    } else {
+        if ($stageFilter !== '') {
+            $stmt->bindValue(':stageFilter', $stageFilter);
+        }
+        if ($outreachDays !== null) {
+            $stmt->bindValue(':outreachDays', $outreachDays, PDO::PARAM_INT);
         }
     }
     if ($nicheId !== null) {
@@ -122,7 +148,7 @@ function bind_common(PDOStatement $stmt, string $view, bool $applyThresholds, in
 
 try {
     $countStmt = $pdo->prepare("SELECT COUNT(*) $baseQuery");
-    bind_common($countStmt, $view, $applyThresholds, $minFollowers, $maxFollowers, $minEngagement, $maxEngagement, $nicheId, $search);
+    bind_common($countStmt, $view, $applyThresholds, $minFollowers, $maxFollowers, $minEngagement, $maxEngagement, $nicheId, $search, $stageFilter, $outreachDays);
     $countStmt->execute();
     $totalFiltered = (int) $countStmt->fetchColumn();
 
@@ -156,7 +182,7 @@ try {
         ORDER BY $orderSql
         LIMIT :start, :length
     ");
-    bind_common($dataStmt, $view, $applyThresholds, $minFollowers, $maxFollowers, $minEngagement, $maxEngagement, $nicheId, $search);
+    bind_common($dataStmt, $view, $applyThresholds, $minFollowers, $maxFollowers, $minEngagement, $maxEngagement, $nicheId, $search, $stageFilter, $outreachDays);
     $dataStmt->bindValue(':start', $start, PDO::PARAM_INT);
     $dataStmt->bindValue(':length', $length, PDO::PARAM_INT);
     $dataStmt->execute();

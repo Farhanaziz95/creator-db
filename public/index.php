@@ -349,6 +349,22 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
     </div>
 </div>
 
+<!-- Move Opportunity Stage Modal -->
+<div id="moveStageModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:450px; width:90%;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <h2 id="moveStageTitle" style="margin:0; font-size:16px; text-transform:none; letter-spacing:0;">🔀 Move Pipeline Stage</h2>
+            <button class="ghost small" onclick="closeMoveStageModal()">✕ Close</button>
+        </div>
+        <label style="font-size:12px; color:var(--muted);">Move this lead's Opportunity to:</label>
+        <select id="moveStageSelect" style="width:100%; margin:6px 0 16px;">
+            <option value="">Loading stages…</option>
+        </select>
+        <button onclick="confirmMoveStage()">Move</button>
+        <span id="moveStageStatus" style="margin-left:10px; font-size:12px; color:var(--muted);"></span>
+    </div>
+</div>
+
 <!-- Manual Review Modal -->
 <div id="manualReviewModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
     <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:600px; width:90%; max-height:80vh; overflow-y:auto;">
@@ -501,6 +517,15 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
                 <option value="contacted">Contacted</option>
                 <option value="not_contacted">Not Contacted</option>
                 <option value="ghosted">Ghosted (no reply)</option>
+            </select>
+            <select id="stageFilterSelect" onchange="table.ajax.reload(null, false)" style="width:170px;">
+                <option value="">All pipeline stages</option>
+            </select>
+            <select id="outreachDaysSelect" onchange="table.ajax.reload(null, false)" style="width:150px;">
+                <option value="">Outreached: any time</option>
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
             </select>
         </span>
         <div class="action-menu" style="margin-left:auto; align-self:center;">
@@ -881,6 +906,8 @@ function initTable() {
                 d.max_engagement = document.getElementById('maxEngagement').value || '';
                 d.niche_id = document.getElementById('nicheFilter').value || '';
                 d.outreach_status = document.getElementById('outreachFilterSelect').value || '';
+                d.stage_filter = document.getElementById('stageFilterSelect').value || '';
+                d.outreach_days = document.getElementById('outreachDaysSelect').value || '';
                 d.view = currentView;
             }
         },
@@ -1023,6 +1050,7 @@ function initTable() {
                             <button class="action-menu-btn" onclick="toggleActionMenu(${row.id})">⋮</button>
                             <div class="action-menu-content" id="menu-${row.id}">
                                 <button onclick="openInFlozy(${row.flozy_lead_id})">🔗 Open in Flozy</button>
+                                <button onclick="openMoveStageModal(${row.id}, '${row.username}')">🔀 Move Stage</button>
                                 <button onclick="openGrowthChart(${row.id}, '${row.username}')">📈 Growth Chart</button>
                                 <button onclick="triggerGameplanUpload(${row.id})">📄 Upload Gameplan</button>
                                 <button onclick="rerunAiOnly(${row.id})">🔁 Retry AI Only</button>
@@ -1045,6 +1073,21 @@ function initTable() {
     });
 }
 
+function loadFlozyStageFilterOptions() {
+    const select = document.getElementById('stageFilterSelect');
+    const currentValue = select.value; // preserve selection across reloads if it's still a valid option
+    fetch('../api/flozy_stages_in_use.php')
+        .then(r => r.json())
+        .then(res => {
+            select.innerHTML = '<option value="">All pipeline stages</option>' +
+                res.data.map(s => `<option value="${s}">${s}</option>`).join('');
+            if (res.data.includes(currentValue)) {
+                select.value = currentValue;
+            }
+        })
+        .catch(err => console.error('[ERROR] Could not load pipeline stage list.', err));
+}
+
 function switchView(view) {
     currentView = view;
     document.getElementById('tabActive').classList.toggle('active', view === 'active');
@@ -1052,8 +1095,13 @@ function switchView(view) {
     document.getElementById('tabFuture').classList.toggle('active', view === 'future');
     document.getElementById('tabFlozy').classList.toggle('active', view === 'flozy');
     document.getElementById('outreachFilterWrap').style.display = (view === 'flozy') ? 'inline-block' : 'none';
-    if (view !== 'flozy') {
-        document.getElementById('outreachFilterSelect').value = ''; // reset — filter is meaningless outside Flozy tab
+    if (view === 'flozy') {
+        loadFlozyStageFilterOptions();
+    } else {
+        // reset — all three filters are meaningless outside the Flozy tab
+        document.getElementById('outreachFilterSelect').value = '';
+        document.getElementById('stageFilterSelect').value = '';
+        document.getElementById('outreachDaysSelect').value = '';
     }
     selectedIds.clear();
     selectedUsernames.clear(); // was missing — left stale username entries behind on every tab switch, which is what let "Open Selected in New Tabs" open leftover profiles from a previous tab
@@ -1450,6 +1498,71 @@ function onFollowupTypeChange() {
     const type = document.getElementById('followupType').value;
     document.getElementById('followupInputWrap').style.display = (type === 'regular') ? 'none' : 'block';
 }
+
+let pendingMoveStageProfileId = null;
+let pendingMoveStageUsername = '';
+
+function openMoveStageModal(profileId, username) {
+    pendingMoveStageProfileId = profileId;
+    pendingMoveStageUsername = username;
+    document.getElementById('moveStageTitle').textContent = `🔀 Move Pipeline Stage — @${username}`;
+    document.getElementById('moveStageStatus').textContent = '';
+    const select = document.getElementById('moveStageSelect');
+    select.innerHTML = '<option value="">Loading stages…</option>';
+    document.getElementById('moveStageModal').style.display = 'flex';
+
+    fetch('../api/flozy_pipeline_stages.php')
+        .then(r => r.json())
+        .then(res => {
+            if (!res.flozy_reachable || !res.data.length) {
+                select.innerHTML = '<option value="">Could not load stages from Flozy</option>';
+                return;
+            }
+            select.innerHTML = res.data.map(s =>
+                `<option value="${s.id}" data-name="${s.name}" data-tag="${s.tag || ''}">${s.name}</option>`
+            ).join('');
+        })
+        .catch(err => {
+            select.innerHTML = '<option value="">Could not load stages from Flozy</option>';
+            console.error('[ERROR] Could not load pipeline stages.', err);
+        });
+}
+function closeMoveStageModal() {
+    document.getElementById('moveStageModal').style.display = 'none';
+}
+function confirmMoveStage() {
+    const select = document.getElementById('moveStageSelect');
+    const stageId = select.value;
+    if (!stageId) {
+        notifyWarning('Pick a stage first.');
+        return;
+    }
+    const selectedOption = select.options[select.selectedIndex];
+    const stageName = selectedOption.getAttribute('data-name');
+    const stageTag = selectedOption.getAttribute('data-tag');
+
+    document.getElementById('moveStageStatus').textContent = 'Moving…';
+    fetch('../api/move_opportunity_stage.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile_id: pendingMoveStageProfileId, stage_id: stageId, stage_name: stageName, stage_tag: stageTag })
+    })
+        .then(r => r.json())
+        .then(res => {
+            if (!res.success) {
+                document.getElementById('moveStageStatus').textContent = '';
+                notifyError('Could not move stage.', res.error);
+                return;
+            }
+            notifyInfo(`Moved @${pendingMoveStageUsername} to "${res.stage}".`);
+            closeMoveStageModal();
+            table.ajax.reload(null, false);
+        })
+        .catch(err => {
+            document.getElementById('moveStageStatus').textContent = '';
+            notifyError('Could not move stage.', err);
+        });
+}
+
 function generateFollowup() {
     const type = document.getElementById('followupType').value;
     const userInput = document.getElementById('followupUserInput').value.trim();

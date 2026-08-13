@@ -31,6 +31,64 @@ This clears the AI queue automatically every few minutes.
    - Add arguments: `C:\xampp\htdocs\creator-db\jobs\process_niche_queue.php`
 4. Save. It'll now run quietly in the background, pulling ~10 profiles per run through the free OpenRouter models (keyword-matched profiles never touch this — only the leftovers with no business category and no keyword match).
 
+## Round 31: Elaborated outreach filter (stage + date range)
+
+The outreach filter from Round 29 could only sort by Contacted / Not
+Contacted / Ghosted. Added two more filters that combine (AND) with it —
+no more scrolling through a growing Sent to Flozy list to find who's
+actually still worth a follow-up:
+
+- **Pipeline Stage filter** — a dropdown of your real stage names,
+  sourced from `flozy_leads.current_stage` (already kept fresh locally
+  by the 🔄 sync buttons, so this loads instantly with no extra Flozy API
+  call). New `api/flozy_stages_in_use.php` powers it.
+- **Outreached In filter** — Any time / Last 7 days / Last 30 days / Last
+  90 days, filtered against `flozy_leads.outreached_at`.
+- `api/profiles.php` — `stage_filter` is bound as a real parameter (it's
+  an arbitrary value, unlike the small fixed set of literal fragments
+  `outreach_status` drives), `outreach_days` is whitelisted the same way
+  `outreach_status` already was. All three filters AND together, e.g.
+  "Contacted" + "Discovery Call Booked" + "Last 30 days" narrows to
+  exactly that.
+- All three reset automatically when you leave the Sent to Flozy tab,
+  same as the original outreach filter — they have no meaning elsewhere.
+
+### ✅ Finished — "Move Stage" (change a lead's Flozy Opportunity stage from this app)
+Confirmed against Flozy's real published API docs
+(`docs.flozy.com/api-reference/opportunities/*`) before building anything —
+not guessed. Confirmed:
+- `PUT /opportunities/{id}` — a partial update; Flozy's own docs example
+  sends only `stage_id` + `confidence` together, so `value`, `lead_id`,
+  and `expected_close_date` don't need to be resent just to move stages.
+- `POST /opportunities` (create, already in use since Round 28) returns
+  the new Opportunity's own ID as `data.id`.
+- `GET /opportunities` (list, already in use for stage sync) returns each
+  item's own ID as `items[].id` — same shape the existing sync code
+  already expected, just wasn't capturing that one field yet.
+
+Built:
+- `sql/migration_024_opportunity_id.sql` — new
+  `flozy_leads.flozy_opportunity_id` column. This is NOT the same as
+  `flozy_lead_id` — a Lead and its Opportunity are different resources
+  with different IDs, and updating requires the Opportunity's.
+- `includes/flozy_client.php` — captures the Opportunity ID at the moment
+  it's created during a push, going forward.
+- `api/sync_flozy_stage.php` — backfills `flozy_opportunity_id` for leads
+  pushed *before* this round (via `COALESCE`, so it only fills a missing
+  value, never overwrites a known-good one) — runs automatically the next
+  time you hit 🔄 or "Sync All Pipeline Stages" on an older lead.
+- `api/flozy_pipeline_stages.php` — new endpoint, fresh `GET /pipelines`
+  call, returns real stage `{id, name, tag}` triples for the picker.
+- `api/move_opportunity_stage.php` — the actual move. If a lead doesn't
+  have an Opportunity ID on record yet (i.e. it's an old lead that hasn't
+  been synced once since this round), it fails with a clear message
+  telling you to sync that row first, rather than a confusing Flozy error.
+- **🔀 Move Stage**, in the ⋮ action menu on the Sent to Flozy tab — opens
+  a small modal, pick a real stage from a live-loaded dropdown, done. The
+  Pipeline Stage badge updates immediately using data already in hand
+  (the stage name/tag the picker just showed you), no second Flozy
+  round-trip needed just to redisplay what you already know you just set.
+
 ## Round 30: Flozy deep-link, bulk-tab-open bug fix, Opportunity re-confirmed
 
 ### Direct link to the Flozy lead

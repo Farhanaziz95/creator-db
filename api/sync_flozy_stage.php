@@ -41,10 +41,10 @@ function build_stage_lookup(): array
 }
 
 /**
- * Returns [lead_id => stage_id] by paginating through every opportunity.
- * If a lead somehow has more than one opportunity, the last one seen wins
- * (opportunities are returned newest-first by default per the API's
- * default order=desc).
+ * Returns [lead_id => ['stage_id' => ..., 'opportunity_id' => ...]] by
+ * paginating through every opportunity. If a lead somehow has more than
+ * one opportunity, the last one seen wins (opportunities are returned
+ * newest-first by default per the API's default order=desc).
  */
 function build_lead_opportunity_lookup(): array
 {
@@ -60,7 +60,10 @@ function build_lead_opportunity_lookup(): array
         foreach ($items as $opp) {
             $leadId = $opp['lead_id'] ?? null;
             if ($leadId && !isset($lookup[$leadId])) { // first one seen = most recent, since newest-first
-                $lookup[$leadId] = $opp['stage_id'];
+                $lookup[$leadId] = [
+                    'stage_id'       => $opp['stage_id'] ?? null,
+                    'opportunity_id' => $opp['id'] ?? null,
+                ];
             }
         }
         $totalPages = $result['data']['pagination']['total_pages'] ?? 1;
@@ -78,7 +81,9 @@ $leadOpportunityLookup = build_lead_opportunity_lookup();
 
 function apply_stage(PDO $pdo, int $profileId, int $flozyLeadId, array $stageLookup, array $leadOpportunityLookup): array
 {
-    $stageId = $leadOpportunityLookup[$flozyLeadId] ?? null;
+    $opportunity = $leadOpportunityLookup[$flozyLeadId] ?? null;
+    $stageId = $opportunity['stage_id'] ?? null;
+    $opportunityId = $opportunity['opportunity_id'] ?? null;
 
     if ($stageId === null) {
         $stmt = $pdo->prepare("UPDATE flozy_leads SET current_stage = NULL, current_stage_tag = NULL, stage_synced_at = NOW() WHERE profile_id = ?");
@@ -90,8 +95,18 @@ function apply_stage(PDO $pdo, int $profileId, int $flozyLeadId, array $stageLoo
     $stageName = $stageInfo['name'] ?? "Unknown stage (id {$stageId})";
     $stageTag  = $stageInfo['tag'] ?? null;
 
-    $stmt = $pdo->prepare("UPDATE flozy_leads SET current_stage = ?, current_stage_tag = ?, stage_synced_at = NOW() WHERE profile_id = ?");
-    $stmt->execute([$stageName, $stageTag, $profileId]);
+    // COALESCE, not overwrite — this backfills flozy_opportunity_id for
+    // leads pushed before Round 31 added ID capture at push time (Move
+    // Stage has nothing to update without it). Leads that already have
+    // one keep it, rather than swapping in whatever sync happened to see
+    // this time around.
+    $stmt = $pdo->prepare("
+        UPDATE flozy_leads
+        SET current_stage = ?, current_stage_tag = ?, stage_synced_at = NOW(),
+            flozy_opportunity_id = COALESCE(flozy_opportunity_id, ?)
+        WHERE profile_id = ?
+    ");
+    $stmt->execute([$stageName, $stageTag, $opportunityId, $profileId]);
 
     return ['success' => true, 'stage' => $stageName, 'tag' => $stageTag];
 }
