@@ -365,6 +365,36 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
     </div>
 </div>
 
+<!-- Flozy Tasks & Reminders Modal -->
+<div id="flozyTasksModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:600px; width:90%; max-height:85vh; overflow-y:auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <h2 id="flozyTasksTitle" style="margin:0; font-size:16px; text-transform:none; letter-spacing:0;">🔔 Tasks & Reminders</h2>
+            <button class="ghost small" onclick="closeFlozyTasksModal()">✕ Close</button>
+        </div>
+        <p style="font-size:12px; color:var(--muted); margin:0 0 14px;">
+            Live from Flozy — shows tasks added here in the app AND anything
+            added directly in Flozy's UI, so you only have to check one place.
+        </p>
+        <div id="flozyTasksList"></div>
+
+        <div style="margin-top:18px; padding-top:16px; border-top:1px solid var(--border);">
+            <label style="font-size:12px; color:var(--muted);">Add a task</label>
+            <input type="text" id="newFlozyTaskTitle" placeholder="e.g. Call back Tuesday" style="width:100%; margin:6px 0;">
+            <div style="display:flex; gap:8px;">
+                <input type="date" id="newFlozyTaskDue" style="flex:1;">
+                <select id="newFlozyTaskPriority" style="width:110px;">
+                    <option value="1">Low</option>
+                    <option value="2" selected>Medium</option>
+                    <option value="3">High</option>
+                </select>
+            </div>
+            <textarea id="newFlozyTaskDesc" placeholder="Notes (optional)" style="width:100%; height:60px; margin-top:8px; background:#0f1115; border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px; font-size:13px;"></textarea>
+            <button onclick="addFlozyTask()" style="margin-top:8px;">Add Task</button>
+        </div>
+    </div>
+</div>
+
 <!-- Manual Review Modal -->
 <div id="manualReviewModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
     <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:600px; width:90%; max-height:80vh; overflow-y:auto;">
@@ -1051,6 +1081,7 @@ function initTable() {
                             <div class="action-menu-content" id="menu-${row.id}">
                                 <button onclick="openInFlozy(${row.flozy_lead_id})">🔗 Open in Flozy</button>
                                 <button onclick="openMoveStageModal(${row.id}, '${row.username}')">🔀 Move Stage</button>
+                                <button onclick="openFlozyTasksModal(${row.id}, '${row.username}')">🔔 Tasks & Reminders</button>
                                 <button onclick="openGrowthChart(${row.id}, '${row.username}')">📈 Growth Chart</button>
                                 <button onclick="triggerGameplanUpload(${row.id})">📄 Upload Gameplan</button>
                                 <button onclick="rerunAiOnly(${row.id})">🔁 Retry AI Only</button>
@@ -1561,6 +1592,111 @@ function confirmMoveStage() {
             document.getElementById('moveStageStatus').textContent = '';
             notifyError('Could not move stage.', err);
         });
+}
+
+let pendingFlozyTasksProfileId = null;
+
+function openFlozyTasksModal(profileId, username) {
+    pendingFlozyTasksProfileId = profileId;
+    document.getElementById('flozyTasksTitle').textContent = `🔔 Tasks & Reminders — @${username}`;
+    document.getElementById('flozyTasksList').innerHTML = '<p style="color:var(--muted); font-size:13px;">Loading…</p>';
+    document.getElementById('newFlozyTaskTitle').value = '';
+    document.getElementById('newFlozyTaskDue').value = '';
+    document.getElementById('newFlozyTaskDesc').value = '';
+    document.getElementById('newFlozyTaskPriority').value = '2';
+    document.getElementById('flozyTasksModal').style.display = 'flex';
+    loadFlozyTasks();
+}
+function closeFlozyTasksModal() {
+    document.getElementById('flozyTasksModal').style.display = 'none';
+}
+
+function loadFlozyTasks() {
+    const list = document.getElementById('flozyTasksList');
+    fetch(`../api/flozy_lead_tasks.php?profile_id=${pendingFlozyTasksProfileId}`)
+        .then(r => r.json())
+        .then(res => {
+            if (!res.success) {
+                list.innerHTML = `<p style="color:var(--danger); font-size:13px;">${res.error}</p>`;
+                return;
+            }
+            if (!res.data.length) {
+                list.innerHTML = '<p style="color:var(--muted); font-size:13px;">No tasks for this lead yet.</p>';
+                return;
+            }
+            const statusLabels = { 1: 'To Do', 2: 'In Progress', 3: 'Done', 4: 'In Review' };
+            const today = new Date().toISOString().split('T')[0];
+            list.innerHTML = res.data.map(t => {
+                const isDone = t.status === 3;
+                const dueDateOnly = t.due_date ? t.due_date.split('T')[0] : null;
+                const isOverdue = !isDone && dueDateOnly && dueDateOnly < today;
+                const originBadge = t.created_in_app
+                    ? '<span class="badge" style="background:rgba(96,165,250,0.2); font-size:10px;">📱 App</span>'
+                    : '<span class="badge" style="background:rgba(168,85,247,0.2); font-size:10px;">🏢 Flozy</span>';
+                const dueLine = dueDateOnly
+                    ? `<div style="font-size:11px; color:${isOverdue ? 'var(--danger)' : 'var(--muted)'}; margin-top:4px;">${isOverdue ? '⚠️ Overdue — ' : 'Due '}${dueDateOnly}</div>`
+                    : '';
+                return `
+                    <div style="background:#0f1115; border:1px solid ${isOverdue ? 'var(--danger)' : 'var(--border)'}; border-radius:8px; padding:12px; margin-bottom:8px;">
+                        <div style="display:flex; justify-content:space-between; align-items:start; gap:8px;">
+                            <div style="font-size:13px; ${isDone ? 'text-decoration:line-through; color:var(--muted);' : ''}">${t.title}</div>
+                            ${originBadge}
+                        </div>
+                        ${t.description ? `<div style="font-size:12px; color:var(--muted); margin-top:4px;">${t.description}</div>` : ''}
+                        ${dueLine}
+                        <div style="margin-top:8px; display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:11px; color:var(--muted);">${statusLabels[t.status] || 'Unknown'}</span>
+                            ${!isDone ? `<button class="small ghost" onclick="completeFlozyTask(${t.id})">✅ Mark Done</button>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        })
+        .catch(err => {
+            list.innerHTML = '<p style="color:var(--danger); font-size:13px;">Could not load tasks.</p>';
+            console.error('[ERROR] Could not load Flozy tasks.', err);
+        });
+}
+
+function addFlozyTask() {
+    const title = document.getElementById('newFlozyTaskTitle').value.trim();
+    if (!title) { notifyWarning('Title is required.'); return; }
+
+    fetch('../api/flozy_lead_tasks.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            action: 'add',
+            profile_id: pendingFlozyTasksProfileId,
+            title: title,
+            description: document.getElementById('newFlozyTaskDesc').value,
+            due_date: document.getElementById('newFlozyTaskDue').value,
+            priority: document.getElementById('newFlozyTaskPriority').value,
+        })
+    })
+        .then(r => r.json())
+        .then(res => {
+            if (!res.success) { notifyError('Could not add task.', res.error); return; }
+            notifyInfo('Task added.');
+            document.getElementById('newFlozyTaskTitle').value = '';
+            document.getElementById('newFlozyTaskDue').value = '';
+            document.getElementById('newFlozyTaskDesc').value = '';
+            loadFlozyTasks();
+        })
+        .catch(err => notifyError('Could not add task.', err));
+}
+
+function completeFlozyTask(taskId) {
+    fetch('../api/flozy_lead_tasks.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'complete', profile_id: pendingFlozyTasksProfileId, task_id: taskId })
+    })
+        .then(r => r.json())
+        .then(res => {
+            if (!res.success) { notifyError('Could not mark task complete.', res.error); return; }
+            notifyInfo('Marked complete.');
+            loadFlozyTasks();
+        })
+        .catch(err => notifyError('Could not mark task complete.', err));
 }
 
 function generateFollowup() {

@@ -31,6 +31,65 @@ This clears the AI queue automatically every few minutes.
    - Add arguments: `C:\xampp\htdocs\creator-db\jobs\process_niche_queue.php`
 4. Save. It'll now run quietly in the background, pulling ~10 profiles per run through the free OpenRouter models (keyword-matched profiles never touch this — only the leftovers with no business category and no keyword match).
 
+## Round 32: Live Tasks & Reminders (part 1 of the "syncing with Flozy" plan)
+
+You asked about closing the gap between working in this app vs working
+directly in Flozy, without having to manage two separate systems. Agreed
+approach was 3 pieces, one at a time:
+1. **Live task view (this round)** — see everything regardless of where
+   it was created.
+2. Import leads created directly in Flozy that this app doesn't know
+   about yet.
+3. Create the missing Opportunity for leads pushed before Round 28 added
+   auto-creation (a real gap you caught — those leads never got one at
+   all, so there's nothing for a sync to backfill; it has to actually
+   create one).
+
+### This round: 🔔 Tasks & Reminders
+Confirmed against Flozy's real API docs first
+(`docs.flozy.com/api-reference/tasks/*`), same discipline as every other
+Flozy integration in this project:
+- `GET /tasks` has **no `lead_id` filter** — confirmed from the docs, not
+  assumed. Only `page`/`limit`/`order`/`search` exist as params. Same
+  situation as Opportunities. So listing one lead's tasks means
+  paginating through everything and filtering locally — new
+  `fetch_tasks_for_lead()` in `api/flozy_lead_tasks.php` does this,
+  mirroring the existing `build_lead_opportunity_lookup()` pattern in
+  `api/sync_flozy_stage.php`.
+- `id`, `title`, `status`, `priority`, `lead_id`, `created_at` all
+  confirmed as real fields; status codes match what's already used
+  throughout this project (1 todo / 2 in progress / 3 completed / 4 in
+  review). `description`/`due_date` aren't shown in the docs' (trimmed)
+  example responses even though Create accepts them — displayed
+  defensively (`?? null`) rather than assumed present.
+
+**New: 🔔 Tasks & Reminders**, in the ⋮ menu on the Sent to Flozy tab —
+opens a modal showing every task for that lead, tagged **📱 App** or
+**🏢 Flozy** depending on where it was actually created (origin is
+determined by checking against the local `flozy_lead_tasks` table, not
+guessed). Overdue tasks get a red border and an ⚠️ flag. You can:
+- **Add a task** right there (title, optional due date/priority/notes) —
+  goes straight to Flozy via the already-confirmed `POST /tasks`, and
+  gets recorded locally too so it's correctly tagged "App" next time.
+- **Mark a task done** via the already-confirmed `PUT /tasks/{id}`
+  pattern (same one `api/gameplan_upload.php` already uses).
+
+**Note on "reminders":** this is a local PHP/MySQL app with no email or
+push-notification infrastructure, so "reminder" here means overdue tasks
+are visually flagged whenever you open this view — not an active
+notification. If you actually want a daily digest email or something
+similar, that's a materially different (and bigger) build — say the word
+and it can be scoped separately.
+
+**Heads up on performance:** since there's no `lead_id` filter, opening
+this view scans every task in your account, paginated 100 at a time. Fine
+at current scale; if your total task count grows into the thousands,
+this will get slower to open per-lead — not urgent now, just flagging it
+so it's not a surprise later.
+
+Parts 2 (import unmatched Flozy leads) and 3 (create missing
+Opportunities for pre-Round-28 leads) are next, one at a time as agreed.
+
 ## Round 31: Elaborated outreach filter (stage + date range)
 
 The outreach filter from Round 29 could only sort by Contacted / Not
