@@ -31,6 +31,47 @@ This clears the AI queue automatically every few minutes.
    - Add arguments: `C:\xampp\htdocs\creator-db\jobs\process_niche_queue.php`
 4. Save. It'll now run quietly in the background, pulling ~10 profiles per run through the free OpenRouter models (keyword-matched profiles never touch this — only the leftovers with no business category and no keyword match).
 
+## Round 33: The actual "reminder" — an Overdue panel
+
+Fair pushback on Round 32: a task view you have to remember to open isn't
+a reminder, it's a filing cabinet. This closes that gap — plus some
+brainstorming on where the app's UI is headed next.
+
+### ⚠️ Overdue panel — new, top of the dashboard
+Scans **every** task across **every** Flozy lead in one pass (not
+per-lead lookups) and lists anything overdue: creator, task, how many
+days overdue, priority — each with an "Open →" button straight into that
+lead's Tasks & Reminders modal. Shows a calm "✅ Nothing overdue right
+now" when there's nothing to flag, so it's not a permanent red alarm
+block when everything's on track.
+
+- `includes/flozy_client.php` — pulled the raw pagination fetch out of
+  `api/flozy_lead_tasks.php` into a shared `fetch_all_flozy_tasks()`, so
+  both that file (filters to one lead) and the new
+  `api/flozy_overdue_tasks.php` (filters to overdue across every lead)
+  scan Flozy's task list once each, from one place, instead of
+  duplicating the same loop twice.
+- `api/flozy_overdue_tasks.php` — new. Maps `lead_id → {profile_id,
+  username}` locally so an overdue task can actually be attributed to a
+  creator, then filters for `status != 3` (not done) and a `due_date` in
+  the past.
+- Refreshes automatically on page load, after marking a task done, and
+  after adding a new task — plus a manual 🔄 button if you want to check
+  without waiting.
+
+### Brainstormed, not built yet: accordion/child-row layout
+Discussed switching some of the modal-based views (Tasks & Reminders,
+History, Results) to DataTables' native expandable child rows instead of
+floating modals, for faster in-place access — Follow-up staying a modal
+since it's a multi-step flow (pick type → conditionally describe what
+you're sharing → generate → copy), which doesn't compress well into an
+inline row. Worth noting: done right, this doesn't have to cost load
+time — child rows can lazy-fetch on expand exactly like the modals
+already do, so the tradeoff is really about UI shape (inline vs.
+floating), not speed. No code changed yet — this is queued as a separate
+pass once there's bandwidth for a UI restructuring, not bundled into this
+round's task-visibility fix.
+
 ## Round 32: Live Tasks & Reminders (part 1 of the "syncing with Flozy" plan)
 
 You asked about closing the gap between working in this app vs working
@@ -87,8 +128,47 @@ at current scale; if your total task count grows into the thousands,
 this will get slower to open per-lead — not urgent now, just flagging it
 so it's not a surprise later.
 
-Parts 2 (import unmatched Flozy leads) and 3 (create missing
-Opportunities for pre-Round-28 leads) are next, one at a time as agreed.
+### Part 2 (import unmatched Flozy leads) — dropped
+You confirmed you never add prospects directly in Flozy, so there's
+nothing this would ever actually import. Skipped rather than building
+something with no real use case.
+
+### Part 3 — done: 🩹 Create Missing Opportunities
+You caught something real: leads pushed **before** Round 28 added
+automatic Opportunity creation never got one at all — there's nothing in
+Flozy for a sync to find. `Sync All Pipeline Stages` can only backfill an
+ID for an Opportunity that already exists; it can't conjure one into
+existence. This needed its own action.
+
+- Refactored `includes/flozy_client.php` first: pulled the
+  Opportunity-creation logic that used to live only inline inside
+  `push_profile_to_flozy()` out into a shared `create_opportunity_for_lead()`
+  function, and moved `build_stage_lookup()` /
+  `build_lead_opportunity_lookup()` out of `api/sync_flozy_stage.php` into
+  the same shared file. All three Flozy-writing/reading code paths (push,
+  sync, and this new bulk fixer) now call the same functions instead of
+  three copies of similar logic drifting apart over time.
+- **New: 🩹 Create Missing Opportunities**, filter panel, next to "Sync
+  All Pipeline Stages." For every pushed lead:
+  - Does a **fresh live check** against Flozy first (not just the local
+    `flozy_opportunity_id` column) to confirm an Opportunity genuinely
+    doesn't exist — a lead could have one that's simply never been synced
+    locally, and this must never create a duplicate for that case. If one
+    already exists, it's backfilled locally instead of recreated.
+  - Otherwise, creates one using the same `config/flozy.php` defaults
+    (`default_opportunity_stage_name`, `default_opportunity_close_days`,
+    `default_opportunity_confidence`) used at push time, and stamps the
+    new stage locally immediately — no follow-up sync needed just to see
+    it reflected.
+  - Paced at ~3 requests/sec (`usleep(300000)` between leads) since this
+    can process many leads in one run and each one is a real write, not a
+    cheap read.
+  - Reports created / already-had-one / failed counts, with per-lead error
+    detail for anything that failed (most likely cause: same as push-time
+    — `default_opportunity_stage_name` not matching a real stage).
+
+All 3 parts of the original ask are now resolved (part 2 intentionally
+skipped as not needed for how you actually use Flozy).
 
 ## Round 31: Elaborated outreach filter (stage + date range)
 

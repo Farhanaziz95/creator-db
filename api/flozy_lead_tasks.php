@@ -29,31 +29,17 @@ function get_flozy_lead_id(PDO $pdo, int $profileId): ?int
 }
 
 /**
- * Paginates through every task Flozy has and returns only the ones
- * belonging to $flozyLeadId. No lead_id filter exists server-side, so
- * this has to scan — mirrors build_lead_opportunity_lookup() in
- * api/sync_flozy_stage.php.
+ * Filters the full task list (fetch_all_flozy_tasks(), shared with
+ * api/flozy_overdue_tasks.php in includes/flozy_client.php) down to just
+ * this lead.
  */
 function fetch_tasks_for_lead(int $flozyLeadId): array
 {
-    $matched = [];
-    $page = 1;
-
-    do {
-        $result = flozy_request('GET', '/tasks?page=' . $page . '&limit=100&order=desc');
-        if (!$result['success']) {
-            return ['success' => false, 'error' => $result['error'], 'tasks' => []];
-        }
-        $items = $result['data']['items'] ?? [];
-        foreach ($items as $task) {
-            if ((int) ($task['lead_id'] ?? 0) === $flozyLeadId) {
-                $matched[] = $task;
-            }
-        }
-        $totalPages = $result['data']['pagination']['total_pages'] ?? 1;
-        $page++;
-    } while ($page <= $totalPages);
-
+    $fetch = fetch_all_flozy_tasks();
+    if (!$fetch['success']) {
+        return $fetch;
+    }
+    $matched = array_values(array_filter($fetch['tasks'], fn($task) => (int) ($task['lead_id'] ?? 0) === $flozyLeadId));
     return ['success' => true, 'error' => null, 'tasks' => $matched];
 }
 

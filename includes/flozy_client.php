@@ -51,6 +51,155 @@ function flozy_request(string $method, string $path, ?array $body = null): array
 }
 
 /**
+ * Returns [stage_id => ['name' => ..., 'tag' => ...]] across all pipelines.
+ * Shared by api/sync_flozy_stage.php and api/create_missing_opportunities.php
+ * — moved here in Round 32 so both can use the same source of truth
+ * instead of two copies of the same pagination logic.
+ */
+function build_stage_lookup(): array
+{
+    $result = flozy_request('GET', '/pipelines');
+    if (!$result['success']) {
+        return [];
+    }
+
+    $lookup = [];
+    foreach ($result['data'] ?? [] as $pipeline) {
+        foreach ($pipeline['stages'] ?? [] as $stage) {
+            $lookup[$stage['id']] = ['name' => $stage['name'], 'tag' => $stage['tag_name'] ?? null];
+        }
+    }
+    return $lookup;
+}
+
+/**
+ * Returns [lead_id => ['stage_id' => ..., 'opportunity_id' => ...]] by
+ * paginating through every opportunity. If a lead somehow has more than
+ * one opportunity, the last one seen wins (opportunities are returned
+ * newest-first by default per the API's default order=desc).
+ * Shared the same way build_stage_lookup() is — see note above.
+ */
+function build_lead_opportunity_lookup(): array
+{
+    $lookup = [];
+    $page = 1;
+
+    do {
+        $result = flozy_request('GET', '/opportunities?page=' . $page . '&limit=100');
+        if (!$result['success']) {
+            break;
+        }
+        $items = $result['data']['items'] ?? [];
+        foreach ($items as $opp) {
+            $leadId = $opp['lead_id'] ?? null;
+            if ($leadId && !isset($lookup[$leadId])) { // first one seen = most recent, since newest-first
+                $lookup[$leadId] = [
+                    'stage_id'       => $opp['stage_id'] ?? null,
+                    'opportunity_id' => $opp['id'] ?? null,
+                ];
+            }
+        }
+        $totalPages = $result['data']['pagination']['total_pages'] ?? 1;
+        $page++;
+    } while ($page <= $totalPages);
+
+    return $lookup;
+}
+
+/**
+ * Creates a Flozy Opportunity for an existing lead and stores its own ID
+ * locally (flozy_opportunity_id — separate from flozy_lead_id, and
+ * required to ever update this Opportunity later, e.g. Round 31's "Move
+ * Stage"). Also stamps current_stage/current_stage_tag immediately using
+ * the stage we just set it to, so there's no need for a follow-up sync
+ * just to see it reflected.
+ *
+ * Shared by push_profile_to_flozy() (creates one at push time, as of
+ * Round 28) and api/create_missing_opportunities.php (Round 32 — creates
+ * one retroactively for leads pushed BEFORE Round 28 existed, which never
+ * got one at all).
+ */
+function create_opportunity_for_lead(PDO $pdo, int $profileId, int $flozyLeadId, array $config): array
+{
+    $stageResult = flozy_request('GET', '/pipelines');
+    if (!$stageResult['success']) {
+        return ['success' => false, 'error' => $stageResult['error']];
+    }
+
+    $targetStageId = null;
+    $targetStageName = null;
+    $targetStageTag = null;
+    foreach ($stageResult['data'] ?? [] as $pipeline) {
+        foreach ($pipeline['stages'] ?? [] as $stage) {
+            if (strcasecmp($stage['name'], $config['default_opportunity_stage_name']) === 0) {
+                $targetStageId = $stage['id'];
+                $targetStageName = $stage['name']; // Flozy's exact casing, not the config string
+                $targetStageTag = $stage['tag_name'] ?? null;
+                break 2;
+            }
+        }
+    }
+
+    if (!$targetStageId) {
+        return [
+            'success' => false,
+            'error'   => "No pipeline stage named '{$config['default_opportunity_stage_name']}' found — check config/flozy.php matches a real stage name.",
+        ];
+    }
+
+    $closeDate = date('Y-m-d', strtotime('+' . (int) $config['default_opportunity_close_days'] . ' days'));
+    $oppResult = flozy_request('POST', '/opportunities', [
+        'stage_id'            => $targetStageId,
+        'lead_id'             => $flozyLeadId,
+        'value'               => 0, // unknown at creation time — Flozy requires SOME value
+        'expected_close_date' => $closeDate,
+        'confidence'          => (int) $config['default_opportunity_confidence'],
+    ]);
+
+    if (!$oppResult['success']) {
+        return ['success' => false, 'error' => $oppResult['error']];
+    }
+
+    $opportunityId = $oppResult['data']['id'] ?? null; // confirmed as data.id per Flozy's real API docs
+    if ($opportunityId) {
+        $stmt = $pdo->prepare("
+            UPDATE flozy_leads
+            SET flozy_opportunity_id = ?, current_stage = ?, current_stage_tag = ?, stage_synced_at = NOW()
+            WHERE profile_id = ?
+        ");
+        $stmt->execute([$opportunityId, $targetStageName, $targetStageTag, $profileId]);
+    }
+
+    return ['success' => true, 'opportunity_id' => $opportunityId, 'stage_name' => $targetStageName, 'stage_tag' => $targetStageTag];
+}
+
+/**
+ * Paginates through EVERY task in the account and returns them all,
+ * unfiltered. GET /tasks has no lead_id filter (confirmed against
+ * Flozy's real docs), so both api/flozy_lead_tasks.php (filters to one
+ * lead) and api/flozy_overdue_tasks.php (filters to overdue across every
+ * lead) need this same full scan — shared here so there's one copy of
+ * the pagination loop instead of two.
+ */
+function fetch_all_flozy_tasks(): array
+{
+    $tasks = [];
+    $page = 1;
+
+    do {
+        $result = flozy_request('GET', '/tasks?page=' . $page . '&limit=100&order=desc');
+        if (!$result['success']) {
+            return ['success' => false, 'error' => $result['error'], 'tasks' => []];
+        }
+        $tasks = array_merge($tasks, $result['data']['items'] ?? []);
+        $totalPages = $result['data']['pagination']['total_pages'] ?? 1;
+        $page++;
+    } while ($page <= $totalPages);
+
+    return ['success' => true, 'error' => null, 'tasks' => $tasks];
+}
+
+/**
  * Pushes one profile to Flozy: creates the lead, then creates every active
  * task template linked to it. If the lead is already pushed (exists in our
  * local flozy_leads table), this is a no-op and returns early.
@@ -167,48 +316,11 @@ function push_profile_to_flozy(PDO $pdo, int $profileId): array
 
     // Also creates the OPPORTUNITY, not just the lead — without this, a
     // pushed lead doesn't show up in your Pipeline view at all until you
-    // manually create one in Flozy's own UI.
-    $opportunityError = null;
-    $stageResult = flozy_request('GET', '/pipelines');
-    if ($stageResult['success']) {
-        $targetStageId = null;
-        foreach ($stageResult['data'] ?? [] as $pipeline) {
-            foreach ($pipeline['stages'] ?? [] as $stage) {
-                if (strcasecmp($stage['name'], $config['default_opportunity_stage_name']) === 0) {
-                    $targetStageId = $stage['id'];
-                    break 2;
-                }
-            }
-        }
-
-        if ($targetStageId) {
-            $closeDate = date('Y-m-d', strtotime('+' . (int) $config['default_opportunity_close_days'] . ' days'));
-            $oppResult = flozy_request('POST', '/opportunities', [
-                'stage_id'            => $targetStageId,
-                'lead_id'             => $flozyLeadId,
-                'value'               => 0, // unknown at push time — Flozy requires SOME value
-                'expected_close_date' => $closeDate,
-                'confidence'          => (int) $config['default_opportunity_confidence'],
-            ]);
-            if (!$oppResult['success']) {
-                $opportunityError = $oppResult['error'];
-            } else {
-                // Store the Opportunity's own ID (confirmed as data.id per
-                // Flozy's real API docs) — separate from flozy_lead_id,
-                // and required to ever update this Opportunity's stage later
-                // (Round 31's "Move Stage" feature).
-                $opportunityId = $oppResult['data']['id'] ?? null;
-                if ($opportunityId) {
-                    $stmt = $pdo->prepare("UPDATE flozy_leads SET flozy_opportunity_id = ? WHERE profile_id = ?");
-                    $stmt->execute([$opportunityId, $profileId]);
-                }
-            }
-        } else {
-            $opportunityError = "No pipeline stage named '{$config['default_opportunity_stage_name']}' found — check config/flozy.php matches a real stage name.";
-        }
-    } else {
-        $opportunityError = $stageResult['error'];
-    }
+    // manually create one in Flozy's own UI. Shared with the
+    // "Create Missing Opportunities" retroactive fixer (Round 32) via
+    // create_opportunity_for_lead() — see that function's docblock.
+    $oppCreation = create_opportunity_for_lead($pdo, $profileId, $flozyLeadId, $config);
+    $opportunityError = $oppCreation['success'] ? null : $oppCreation['error'];
 
     return [
         'success'          => true,

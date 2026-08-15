@@ -21,57 +21,9 @@ require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/flozy_client.php';
 header('Content-Type: application/json');
 
-/**
- * Returns [stage_id => ['name' => ..., 'tag' => ...]] across all pipelines.
- */
-function build_stage_lookup(): array
-{
-    $result = flozy_request('GET', '/pipelines');
-    if (!$result['success']) {
-        return [];
-    }
-
-    $lookup = [];
-    foreach ($result['data'] ?? [] as $pipeline) {
-        foreach ($pipeline['stages'] ?? [] as $stage) {
-            $lookup[$stage['id']] = ['name' => $stage['name'], 'tag' => $stage['tag_name'] ?? null];
-        }
-    }
-    return $lookup;
-}
-
-/**
- * Returns [lead_id => ['stage_id' => ..., 'opportunity_id' => ...]] by
- * paginating through every opportunity. If a lead somehow has more than
- * one opportunity, the last one seen wins (opportunities are returned
- * newest-first by default per the API's default order=desc).
- */
-function build_lead_opportunity_lookup(): array
-{
-    $lookup = [];
-    $page = 1;
-
-    do {
-        $result = flozy_request('GET', '/opportunities?page=' . $page . '&limit=100');
-        if (!$result['success']) {
-            break;
-        }
-        $items = $result['data']['items'] ?? [];
-        foreach ($items as $opp) {
-            $leadId = $opp['lead_id'] ?? null;
-            if ($leadId && !isset($lookup[$leadId])) { // first one seen = most recent, since newest-first
-                $lookup[$leadId] = [
-                    'stage_id'       => $opp['stage_id'] ?? null,
-                    'opportunity_id' => $opp['id'] ?? null,
-                ];
-            }
-        }
-        $totalPages = $result['data']['pagination']['total_pages'] ?? 1;
-        $page++;
-    } while ($page <= $totalPages);
-
-    return $lookup;
-}
+// build_stage_lookup() and build_lead_opportunity_lookup() moved into
+// includes/flozy_client.php in Round 32 so api/create_missing_opportunities.php
+// can share them too, instead of duplicating this pagination logic.
 
 $input  = json_decode(file_get_contents('php://input'), true);
 $action = $input['action'] ?? 'sync_one';

@@ -416,6 +416,14 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
 <div class="stats-row" id="statsRow"></div>
 <div id="nicheCheckStatus" style="font-size:12px; color:var(--muted); margin:-14px 0 20px;"></div>
 
+<div class="panel" id="overdueTasksPanel">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h2 style="margin:0;">⚠️ Overdue Tasks</h2>
+        <button class="ghost small" onclick="loadOverdueTasks()">🔄 Refresh</button>
+    </div>
+    <div id="overdueTasksList"><p style="color:var(--muted); font-size:13px;">Loading…</p></div>
+</div>
+
 <div class="panel">
     <h2>Import new Apify data</h2>
     <div class="controls">
@@ -445,6 +453,7 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
         <button class="ghost" onclick="sendToFutureInRange()">Send Range to Future</button>
         <button style="background:#5B7BFF;" onclick="pushQualifiedToFlozy()">Push Qualified to Flozy</button>
         <button class="ghost" onclick="syncAllFlozyStages()">🔄 Sync All Pipeline Stages</button>
+        <button class="ghost" onclick="createMissingOpportunities()">🩹 Create Missing Opportunities</button>
         <button class="ghost" onclick="openImportHistory()">📜 Import History</button>
     </div>
     <div id="archiveStatus"></div>
@@ -920,6 +929,38 @@ function loadStats() {
         });
 }
 
+function loadOverdueTasks() {
+    const container = document.getElementById('overdueTasksList');
+    fetch('../api/flozy_overdue_tasks.php')
+        .then(r => r.json())
+        .then(res => {
+            if (!res.success) {
+                container.innerHTML = `<p style="color:var(--danger); font-size:13px;">${res.error}</p>`;
+                return;
+            }
+            if (!res.data.length) {
+                container.innerHTML = '<p style="color:var(--muted); font-size:13px;">✅ Nothing overdue right now.</p>';
+                return;
+            }
+            const priorityLabels = { 1: 'Low', 2: 'Medium', 3: 'High' };
+            container.innerHTML = res.data.map(t => `
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; background:#0f1115; border:1px solid var(--danger); border-radius:8px; padding:10px 14px; margin-bottom:8px;">
+                    <div>
+                        <span style="font-weight:600;">@${t.username}</span>
+                        <span style="color:var(--muted); margin:0 6px;">—</span>
+                        <span>${t.title}</span>
+                        <div style="font-size:11px; color:var(--danger); margin-top:2px;">⚠️ ${t.days_overdue} day(s) overdue (was due ${t.due_date}) · ${priorityLabels[t.priority] || 'Medium'} priority</div>
+                    </div>
+                    <button class="small ghost" onclick="openFlozyTasksModal(${t.profile_id}, '${t.username}')" style="white-space:nowrap;">Open →</button>
+                </div>
+            `).join('');
+        })
+        .catch(err => {
+            container.innerHTML = '<p style="color:var(--danger); font-size:13px;">Could not load overdue tasks.</p>';
+            console.error('[ERROR] Could not load overdue tasks.', err);
+        });
+}
+
 function initTable() {
     table = $('#profilesTable').DataTable({
         serverSide: true,
@@ -1187,6 +1228,29 @@ function syncAllFlozyStages() {
             table.ajax.reload(null, false);
         })
         .catch(err => { hideLoadingToast(); notifyError('Bulk stage sync failed.', err); });
+}
+
+async function createMissingOpportunities() {
+    const ok = await confirmAction(
+        'Create missing Opportunities?',
+        'For every lead pushed to Flozy that never got an Opportunity created (mainly leads pushed before Round 28 added this automatically) — creates one now using your config/flozy.php defaults. Leads that already have one are left untouched, just backfilled locally if needed. This can take a while for a lot of leads — a bit slower than a normal sync since it writes new data instead of just reading.',
+        'Create them'
+    );
+    if (!ok) return;
+
+    showLoadingToast('Checking leads and creating missing Opportunities… this can take a bit.');
+    fetch('../api/create_missing_opportunities.php', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .then(r => r.json())
+        .then(res => {
+            hideLoadingToast();
+            if (!res.success) { notifyError('Could not finish creating missing Opportunities.', res.error); return; }
+            notifyInfo(`Created ${res.created} new Opportunity/Opportunities. ${res.already_had_one} lead(s) already had one.`);
+            if (res.failed.length) {
+                notifyWarning(`${res.failed.length} lead(s) failed — details in console.`, res.failed);
+            }
+            table.ajax.reload(null, false);
+        })
+        .catch(err => { hideLoadingToast(); notifyError('Could not finish creating missing Opportunities.', err); });
 }
 
 function pushOneToFlozy(profileId) {
@@ -1681,6 +1745,7 @@ function addFlozyTask() {
             document.getElementById('newFlozyTaskDue').value = '';
             document.getElementById('newFlozyTaskDesc').value = '';
             loadFlozyTasks();
+            loadOverdueTasks(); // a new task could theoretically be added with a past due date
         })
         .catch(err => notifyError('Could not add task.', err));
 }
@@ -1695,6 +1760,7 @@ function completeFlozyTask(taskId) {
             if (!res.success) { notifyError('Could not mark task complete.', res.error); return; }
             notifyInfo('Marked complete.');
             loadFlozyTasks();
+            loadOverdueTasks(); // completing a task may remove it from the overdue list
         })
         .catch(err => notifyError('Could not mark task complete.', err));
 }
@@ -2053,6 +2119,7 @@ loadNicheOptions();
 loadScoreWeights();
 loadBudgetSweepInfo();
 loadStats();
+loadOverdueTasks();
 initTable();
 buildColumnToggleMenu();
 
