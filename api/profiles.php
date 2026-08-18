@@ -28,18 +28,18 @@ $view          = $_GET['view'] ?? 'active'; // 'active' | 'archived' | 'future' 
 $applyThresholds = ($view === 'active');
 
 $sortableColumns = [
-    1  => 'p.username',
-    2  => 'p.full_name',
-    3  => 'n.name',
-    4  => 's.followers_count',
-    5  => 's.engagement_rate',
-    6  => 's.quality_score',
-    7  => 's.avg_likes',
-    8  => 's.avg_comments',
-    9  => 's.posts_per_week',
-    10 => 's.biography',
-    11 => 'p.external_url',
-    12 => 's.imported_at',
+    2  => 'p.username',
+    3  => 'p.full_name',
+    4  => 'n.name',
+    5  => 's.followers_count',
+    6  => 's.engagement_rate',
+    7  => 's.quality_score',
+    8  => 's.avg_likes',
+    9  => 's.avg_comments',
+    10 => 's.posts_per_week',
+    11 => 's.biography',
+    12 => 'p.external_url',
+    13 => 's.imported_at',
 ];
 
 $orderSql = 's.engagement_rate DESC';

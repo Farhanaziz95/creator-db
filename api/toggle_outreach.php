@@ -10,6 +10,12 @@
  * uses elsewhere in this project) rather than a notes endpoint, since no
  * notes endpoint has been confirmed against Flozy's real API — per this
  * project's policy of never guessing third-party API fields.
+ *
+ * Round 34: also moves the Opportunity to config/flozy.php's
+ * 'default_contacted_stage_name' when marking outreached (skipped
+ * gracefully, not an error, if that config value is blank — see the
+ * config file's comment). Also skipped, not undone, on undo — same
+ * "don't touch Flozy on undo" reasoning as the task logging above.
  */
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/flozy_client.php';
@@ -31,6 +37,8 @@ $stmt = $pdo->prepare("
 $stmt->execute([$outreached ? date('Y-m-d H:i:s') : null, $profileId]);
 
 $flozyTaskError = null;
+$stageMoveError = null;
+$stageMovedTo = null;
 
 if ($outreached && $flozyLeadId) {
     $taskResult = flozy_request('POST', '/tasks', [
@@ -47,6 +55,22 @@ if ($outreached && $flozyLeadId) {
         // just get surfaced so the person knows the Flozy record didn't land.
         $flozyTaskError = $taskResult['error'];
     }
+
+    $flozyConfig = require __DIR__ . '/../config/flozy.php';
+    $stageMove = move_opportunity_to_named_stage($pdo, $profileId, $flozyConfig['default_contacted_stage_name'] ?? '');
+    if ($stageMove['success']) {
+        $stageMovedTo = $stageMove['stage_name'];
+    } elseif (!$stageMove['skipped']) {
+        // A real failure (e.g. configured name doesn't match a real
+        // stage) — worth surfacing. A "skipped" state (blank config, or
+        // no Opportunity ID yet) is not an error and stays silent.
+        $stageMoveError = $stageMove['error'];
+    }
 }
 
-echo json_encode(['success' => true, 'flozy_task_error' => $flozyTaskError]);
+echo json_encode([
+    'success'          => true,
+    'flozy_task_error' => $flozyTaskError,
+    'stage_moved_to'   => $stageMovedTo,
+    'stage_move_error' => $stageMoveError,
+]);

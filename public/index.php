@@ -108,6 +108,15 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
     .action-menu-content.open { display: block; }
     .action-menu-content button { display: block; width: 100%; text-align: left; background: transparent; border: none; color: var(--text); padding: 9px 12px; font-size: 12px; cursor: pointer; }
     .action-menu-content button:hover { background: #262a33; }
+    .accordion-toggle-cell { text-align: center; }
+    .accordion-toggle-btn { background: transparent; border: 1px solid var(--border); color: var(--accent2); width: 26px; height: 26px; border-radius: 5px; cursor: pointer; font-size: 12px; line-height: 1; }
+    .accordion-toggle-btn:hover { background: #262a33; }
+    tr.shown { background: #1a1e27 !important; }
+    .accordion-panel { padding: 16px 20px; background: #12151b; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .accordion-tabs { display: flex; gap: 8px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+    .accordion-tab-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    .accordion-tab-btn.active { background: var(--accent2); color: #0f1115; border-color: var(--accent2); font-weight: 600; }
+    .accordion-tab-content { max-height: 420px; overflow-y: auto; }
 </style>
 </head>
 <body>
@@ -295,27 +304,6 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
 <input type="file" id="gameplanFileInput" accept="application/pdf" style="display:none;" onchange="handleGameplanFileSelected()">
 
 <!-- Verification Results Modal -->
-<div id="resultsModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:650px; width:90%; max-height:85vh; overflow-y:auto;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-            <h2 style="margin:0; font-size:16px; text-transform:none; letter-spacing:0;">🔍 Verification & Personalized Message</h2>
-            <button class="ghost small" onclick="closeResultsModal()">✕ Close</button>
-        </div>
-        <h3 style="font-size:12px; color:var(--muted); text-transform:uppercase; margin:0 0 6px;">Verification (does the gameplan hold up against real comments?)</h3>
-        <p id="resultsVerification" style="font-size:13px; line-height:1.6; background:#0f1115; padding:12px; border-radius:6px; margin:0 0 18px;"></p>
-
-        <h3 style="font-size:12px; color:var(--accent); text-transform:uppercase; margin:0 0 6px;">🎣 Hook (the opener — this is what shows in their DM preview/notification, decides if they even tap in)</h3>
-        <textarea id="resultsHook" style="width:100%; height:50px; background:#0f1115; border:1px solid var(--accent); color:var(--text); padding:10px; border-radius:6px; font-size:14px; font-weight:600;"></textarea>
-        <button onclick="copyText('resultsHook', 'copyHookStatus')" style="margin-top:8px;">Copy Hook</button>
-        <span id="copyHookStatus" style="margin-left:10px; font-size:12px; color:var(--muted);"></span>
-
-        <h3 style="font-size:12px; color:var(--muted); text-transform:uppercase; margin:18px 0 6px;">Follow-up (only matters once they've opened it — edit freely before sending)</h3>
-        <textarea id="resultsFollowup" style="width:100%; height:100px; background:#0f1115; border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:13px;"></textarea>
-        <button onclick="copyText('resultsFollowup', 'copyFollowupStatus')" style="margin-top:8px;">Copy Follow-up</button>
-        <span id="copyFollowupStatus" style="margin-left:10px; font-size:12px; color:var(--muted);"></span>
-    </div>
-</div>
-
 <!-- Follow-up Modal (guided — you choose the type, system prompts for input) -->
 <div id="followupModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
     <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:550px; width:90%;">
@@ -366,35 +354,6 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
 </div>
 
 <!-- Flozy Tasks & Reminders Modal -->
-<div id="flozyTasksModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:600px; width:90%; max-height:85vh; overflow-y:auto;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-            <h2 id="flozyTasksTitle" style="margin:0; font-size:16px; text-transform:none; letter-spacing:0;">🔔 Tasks & Reminders</h2>
-            <button class="ghost small" onclick="closeFlozyTasksModal()">✕ Close</button>
-        </div>
-        <p style="font-size:12px; color:var(--muted); margin:0 0 14px;">
-            Live from Flozy — shows tasks added here in the app AND anything
-            added directly in Flozy's UI, so you only have to check one place.
-        </p>
-        <div id="flozyTasksList"></div>
-
-        <div style="margin-top:18px; padding-top:16px; border-top:1px solid var(--border);">
-            <label style="font-size:12px; color:var(--muted);">Add a task</label>
-            <input type="text" id="newFlozyTaskTitle" placeholder="e.g. Call back Tuesday" style="width:100%; margin:6px 0;">
-            <div style="display:flex; gap:8px;">
-                <input type="date" id="newFlozyTaskDue" style="flex:1;">
-                <select id="newFlozyTaskPriority" style="width:110px;">
-                    <option value="1">Low</option>
-                    <option value="2" selected>Medium</option>
-                    <option value="3">High</option>
-                </select>
-            </div>
-            <textarea id="newFlozyTaskDesc" placeholder="Notes (optional)" style="width:100%; height:60px; margin-top:8px; background:#0f1115; border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px; font-size:13px;"></textarea>
-            <button onclick="addFlozyTask()" style="margin-top:8px;">Add Task</button>
-        </div>
-    </div>
-</div>
-
 <!-- Manual Review Modal -->
 <div id="manualReviewModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
     <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:600px; width:90%; max-height:80vh; overflow-y:auto;">
@@ -417,11 +376,16 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
 <div id="nicheCheckStatus" style="font-size:12px; color:var(--muted); margin:-14px 0 20px;"></div>
 
 <div class="panel" id="overdueTasksPanel">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-        <h2 style="margin:0;">⚠️ Overdue Tasks</h2>
-        <button class="ghost small" onclick="loadOverdueTasks()">🔄 Refresh</button>
+    <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleOverduePanel()">
+        <h2 id="overdueTasksHeading" style="margin:0;">⚠️ Overdue Tasks</h2>
+        <div style="display:flex; align-items:center; gap:10px;">
+            <button class="ghost small" onclick="event.stopPropagation(); loadOverdueTasks()">🔄 Refresh</button>
+            <span id="overdueTasksChevron" style="font-size:13px; color:var(--muted);">▼</span>
+        </div>
     </div>
-    <div id="overdueTasksList"><p style="color:var(--muted); font-size:13px;">Loading…</p></div>
+    <div id="overdueTasksBody" style="margin-top:12px;">
+        <div id="overdueTasksList" style="max-height:340px; overflow-y:auto;"><p style="color:var(--muted); font-size:13px;">Loading…</p></div>
+    </div>
 </div>
 
 <div class="panel">
@@ -510,17 +474,6 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
 </div>
 
 <!-- Generation History Modal -->
-<div id="genHistoryModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:650px; width:90%; max-height:80vh; overflow-y:auto;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-            <h2 id="genHistoryTitle" style="margin:0; font-size:16px; text-transform:none; letter-spacing:0;">🕐 Generation History</h2>
-            <button class="ghost small" onclick="closeGenerationHistory()">✕ Close</button>
-        </div>
-        <div id="genHistoryFreshness" style="font-size:13px; padding:10px 12px; border-radius:6px; margin-bottom:14px;"></div>
-        <div id="genHistoryTimeline"></div>
-    </div>
-</div>
-
 <!-- Sweep History Modal -->
 <div id="sweepHistoryModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
     <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:750px; width:90%; max-height:80vh; overflow-y:auto;">
@@ -584,6 +537,7 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
         <thead>
             <tr>
                 <th><input type="checkbox" id="selectAllVisible" onchange="toggleSelectAllVisible(this.checked)" title="Select all visible rows"></th>
+                <th></th>
                 <th>Username</th>
                 <th>Full Name</th>
                 <th>Niche</th>
@@ -741,7 +695,9 @@ function updateBulkActionBar() {
     } else if (currentView === 'archived') {
         viewButtons = `<button class="small ghost" onclick="bulkRestoreSelected()">Restore to Active</button>`;
     } else if (currentView === 'flozy') {
-        viewButtons = `<button class="small danger" onclick="bulkRemoveFromFlozySelected()">Remove from Flozy</button>`;
+        viewButtons = `
+            <button class="small danger" onclick="bulkArchiveFlozySelected()">🗄️ Archive (Not a Right Fit)</button>
+            <button class="small danger" onclick="bulkRemoveFromFlozySelected()">Remove from Flozy</button>`;
     }
     buttonsWrap.innerHTML = viewButtons + ` <button class="small ghost" onclick="openSelectedInNewTabs()">🔗 Open Selected in New Tabs</button>`;
 }
@@ -823,6 +779,26 @@ async function bulkRemoveFromFlozySelected() {
     hideLoadingToast();
     notifyInfo(`Removed ${removed} of ${ids.length} from Flozy.`);
     clearSelection(); loadStats();
+}
+
+async function bulkArchiveFlozySelected() {
+    const ids = [...selectedIds];
+    const ok = await confirmAction('Archive selected?', `Moves ${ids.length} Opportunity/Opportunities to "Not a Right Fit" in Flozy and archives them here. Nothing is deleted in Flozy.`, 'Archive them');
+    if (!ok) return;
+    showLoadingToast('Archiving selected…');
+    fetch('../api/archive_flozy_lead.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'selected', profile_ids: ids })
+    })
+        .then(r => r.json())
+        .then(res => {
+            hideLoadingToast();
+            if (!res.success) { notifyError('Bulk archive failed.', res.error); return; }
+            notifyInfo(`Archived ${res.archived} of ${res.total_attempted} lead(s).`);
+            if (res.failed.length) notifyWarning(`${res.failed.length} Flozy stage move(s) failed — archived locally anyway, details in console.`, res.failed);
+            clearSelection(); loadStats();
+        })
+        .catch(err => { hideLoadingToast(); notifyError('Bulk archive failed.', err); });
 }
 
 let table;
@@ -929,15 +905,28 @@ function loadStats() {
         });
 }
 
+function toggleOverduePanel() {
+    const body = document.getElementById('overdueTasksBody');
+    const chevron = document.getElementById('overdueTasksChevron');
+    const collapsed = body.style.display === 'none';
+    body.style.display = collapsed ? 'block' : 'none';
+    chevron.textContent = collapsed ? '▼' : '▶';
+    localStorage.setItem('cdb_overdue_collapsed', collapsed ? '0' : '1');
+}
+
 function loadOverdueTasks() {
     const container = document.getElementById('overdueTasksList');
     fetch('../api/flozy_overdue_tasks.php')
         .then(r => r.json())
         .then(res => {
             if (!res.success) {
+                document.getElementById('overdueTasksHeading').textContent = '⚠️ Overdue Tasks';
                 container.innerHTML = `<p style="color:var(--danger); font-size:13px;">${res.error}</p>`;
                 return;
             }
+            document.getElementById('overdueTasksHeading').textContent = res.data.length
+                ? `⚠️ Overdue Tasks (${res.data.length})`
+                : '⚠️ Overdue Tasks';
             if (!res.data.length) {
                 container.innerHTML = '<p style="color:var(--muted); font-size:13px;">✅ Nothing overdue right now.</p>';
                 return;
@@ -951,7 +940,10 @@ function loadOverdueTasks() {
                         <span>${t.title}</span>
                         <div style="font-size:11px; color:var(--danger); margin-top:2px;">⚠️ ${t.days_overdue} day(s) overdue (was due ${t.due_date}) · ${priorityLabels[t.priority] || 'Medium'} priority</div>
                     </div>
-                    <button class="small ghost" onclick="openFlozyTasksModal(${t.profile_id}, '${t.username}')" style="white-space:nowrap;">Open →</button>
+                    <div style="display:flex; gap:6px; white-space:nowrap;">
+                        <button class="small" style="background:var(--accent2);" onclick="quickCompleteOverdueTask(${t.task_id})">✅ Done</button>
+                        <button class="small ghost" onclick="jumpToFlozyLead('${t.username}')">Open →</button>
+                    </div>
                 </div>
             `).join('');
         })
@@ -959,6 +951,25 @@ function loadOverdueTasks() {
             container.innerHTML = '<p style="color:var(--danger); font-size:13px;">Could not load overdue tasks.</p>';
             console.error('[ERROR] Could not load overdue tasks.', err);
         });
+}
+
+function quickCompleteOverdueTask(taskId) {
+    fetch('../api/flozy_lead_tasks.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'complete', task_id: taskId })
+    })
+        .then(r => r.json())
+        .then(res => {
+            if (!res.success) { notifyError('Could not mark task complete.', res.error); return; }
+            notifyInfo('Marked complete.');
+            loadOverdueTasks();
+            // Refresh the accordion's Tasks tab in place if it's open for
+            // this same task's lead — NOT a full table.ajax.reload(), since
+            // that recreates row DOM nodes and would silently collapse
+            // whatever accordion is currently expanded.
+            if (accordionLoadedTabs.tasks) loadAccordionTasks();
+        })
+        .catch(err => notifyError('Could not mark task complete.', err));
 }
 
 function initTable() {
@@ -989,6 +1000,19 @@ function initTable() {
                 render: function (row) {
                     const checked = selectedIds.has(row.id) ? 'checked' : '';
                     return `<input type="checkbox" class="row-select" data-id="${row.id}" data-username="${row.username}" ${checked} onchange="toggleRowSelect(${row.id}, this.checked, '${row.username}')">`;
+                }
+            },
+            {
+                data: null,
+                orderable: false,
+                className: 'accordion-toggle-cell',
+                render: function (row) {
+                    // Tasks/History/Results moved from modals to this
+                    // expandable row (Round 34) — Active/Future only get
+                    // History+Results tabs (no Tasks, since that needs a
+                    // pushed Flozy lead); Archived gets nothing to expand.
+                    if (currentView === 'archived') return '';
+                    return `<button class="accordion-toggle-btn" onclick="toggleAccordionRow(this, ${row.id}, '${row.username}')" title="Show Tasks/History/Results">▶</button>`;
                 }
             },
             { data: 'username', render: u => `<a class="ext-link" href="https://instagram.com/${u}" target="_blank">@${u}</a>` },
@@ -1087,8 +1111,6 @@ function initTable() {
                                     <button onclick="triggerGameplanUpload(${row.id})">📄 Upload Gameplan</button>
                                     <button onclick="runVerification(${row.id})">🔍 Verify + Personalize</button>
                                     <button onclick="rerunAiOnly(${row.id})">🔁 Retry AI Only</button>
-                                    <button onclick="viewResults(${row.id})">📋 View Results</button>
-                                    <button onclick="openGenerationHistory(${row.id}, '${row.username}')">🕐 History</button>
                                     <button onclick="sendToFuture(${row.id})">⏭️ Send to Future</button>
                                     <button onclick="archiveOne(${row.id})" style="color:var(--danger);">🗄️ Archive</button>
                                 </div>
@@ -1104,8 +1126,6 @@ function initTable() {
                                     <button onclick="triggerGameplanUpload(${row.id})">📄 Upload Gameplan</button>
                                     <button onclick="runVerification(${row.id})">🔍 Verify + Personalize</button>
                                     <button onclick="rerunAiOnly(${row.id})">🔁 Retry AI Only</button>
-                                    <button onclick="viewResults(${row.id})">📋 View Results</button>
-                                    <button onclick="openGenerationHistory(${row.id}, '${row.username}')">🕐 History</button>
                                     <button onclick="pushOneToFlozy(${row.id})">🚀 Send to Flozy</button>
                                     <button onclick="archiveOne(${row.id})" style="color:var(--danger);">🗄️ Archive</button>
                                 </div>
@@ -1122,26 +1142,38 @@ function initTable() {
                             <div class="action-menu-content" id="menu-${row.id}">
                                 <button onclick="openInFlozy(${row.flozy_lead_id})">🔗 Open in Flozy</button>
                                 <button onclick="openMoveStageModal(${row.id}, '${row.username}')">🔀 Move Stage</button>
-                                <button onclick="openFlozyTasksModal(${row.id}, '${row.username}')">🔔 Tasks & Reminders</button>
                                 <button onclick="openGrowthChart(${row.id}, '${row.username}')">📈 Growth Chart</button>
                                 <button onclick="triggerGameplanUpload(${row.id})">📄 Upload Gameplan</button>
                                 <button onclick="rerunAiOnly(${row.id})">🔁 Retry AI Only</button>
-                                <button onclick="viewResults(${row.id})">📋 View Results</button>
                                 <button onclick="openFollowupModal(${row.id})">💬 Follow-up</button>
-                                <button onclick="openGenerationHistory(${row.id}, '${row.username}')">🕐 History</button>
+                                <button onclick="archiveFlozyLead(${row.id}, '${row.username}')" style="color:var(--danger);">🗄️ Archive (Not a Right Fit)</button>
                                 <button onclick="removeFromFlozy(${row.id})" style="color:var(--danger);">❌ Remove from Flozy</button>
                             </div>
                         </div>`;
                 }
             },
         ],
-        order: [[4, 'desc']],
+        order: [[5, 'desc']],
         pageLength: 25,
         createdRow: function (row, data) {
             const tier = getEngagementTier(data.followers_count, data.engagement_rate);
             row.style.backgroundColor = tierColors[tier];
             row.title = 'Engagement tier: ' + tier.charAt(0).toUpperCase() + tier.slice(1) + ' (relative to follower count)';
         },
+    });
+
+    // table.ajax.reload() recreates row DOM nodes, which silently detaches
+    // whatever accordion child row was expanded (the old tr is gone, but a
+    // fresh one renders collapsed by default — visually fine, but our JS
+    // state would otherwise keep pointing at the dead node). Reset cleanly
+    // after every redraw instead of leaving that dangling.
+    table.on('draw', function () {
+        if (currentAccordionTr && !document.body.contains(currentAccordionTr[0])) {
+            currentAccordionTr = null;
+            currentAccordionProfileId = null;
+            currentAccordionUsername = null;
+            accordionLoadedTabs = {};
+        }
     });
 }
 
@@ -1179,7 +1211,22 @@ function switchView(view) {
     selectedUsernames.clear(); // was missing — left stale username entries behind on every tab switch, which is what let "Open Selected in New Tabs" open leftover profiles from a previous tab
     document.getElementById('selectAllVisible').checked = false;
     updateBulkActionBar();
+    closeAccordionRow(); // switching tabs invalidates whatever row was expanded
     table.ajax.reload(); // switching tabs is a real context change, page 1 makes sense here
+}
+
+/**
+ * Used by the Overdue panel's "Open →" button. Server-side pagination
+ * means a specific lead could be on any page, so rather than something
+ * fragile trying to auto-locate and auto-expand a row across pages, this
+ * switches to the Flozy tab and searches for the username — the row
+ * lands on page 1, and the person expands it themselves from there.
+ */
+function jumpToFlozyLead(username) {
+    switchView('flozy');
+    setTimeout(() => {
+        table.search(username).draw();
+    }, 300); // let switchView's own reload settle first, rather than fighting it
 }
 
 function syncFlozyStage(profileId) {
@@ -1319,6 +1366,32 @@ async function removeFromFlozy(profileId) {
             table.ajax.reload(null, false);
         })
         .catch(err => notifyError('Remove from Flozy failed.', err));
+}
+
+async function archiveFlozyLead(profileId, username) {
+    const ok = await confirmAction(
+        `Archive @${username}?`,
+        'Moves the Opportunity to "Not a Right Fit" in Flozy and archives this profile here — nothing is deleted in Flozy, just moved. Reappears under the Archived tab.',
+        'Archive it'
+    );
+    if (!ok) return;
+
+    fetch('../api/archive_flozy_lead.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'one', profile_id: profileId })
+    })
+        .then(r => r.json())
+        .then(res => {
+            if (!res.success) { notifyError('Archive failed.', res.error); return; }
+            if (res.stage_move_error) {
+                notifyWarning(`Archived locally, but the Flozy stage move failed: ${res.stage_move_error}`);
+            } else {
+                notifyInfo(`Archived @${username}.`);
+            }
+            loadStats();
+            table.ajax.reload(null, false);
+        })
+        .catch(err => notifyError('Archive failed.', err));
 }
 
 function reloadTable() {
@@ -1658,26 +1731,111 @@ function confirmMoveStage() {
         });
 }
 
-let pendingFlozyTasksProfileId = null;
+// ===== Accordion (Round 34): replaces the Tasks/History/Results modals
+// with an expandable row panel — single-open (expanding one collapses
+// any other), tabbed, each tab lazy-loaded on first view.
+let currentAccordionTr = null;
+let currentAccordionProfileId = null;
+let currentAccordionUsername = null;
+let accordionLoadedTabs = {};
 
-function openFlozyTasksModal(profileId, username) {
-    pendingFlozyTasksProfileId = profileId;
-    document.getElementById('flozyTasksTitle').textContent = `🔔 Tasks & Reminders — @${username}`;
-    document.getElementById('flozyTasksList').innerHTML = '<p style="color:var(--muted); font-size:13px;">Loading…</p>';
-    document.getElementById('newFlozyTaskTitle').value = '';
-    document.getElementById('newFlozyTaskDue').value = '';
-    document.getElementById('newFlozyTaskDesc').value = '';
-    document.getElementById('newFlozyTaskPriority').value = '2';
-    document.getElementById('flozyTasksModal').style.display = 'flex';
-    loadFlozyTasks();
-}
-function closeFlozyTasksModal() {
-    document.getElementById('flozyTasksModal').style.display = 'none';
+function buildAccordionPanelHtml(profileId, username) {
+    const showTasksTab = (currentView === 'flozy');
+    const defaultTab = showTasksTab ? 'tasks' : 'history';
+    return `
+        <div class="accordion-panel">
+            <div class="accordion-tabs">
+                ${showTasksTab ? `<button class="accordion-tab-btn ${defaultTab === 'tasks' ? 'active' : ''}" data-tab="tasks" onclick="switchAccordionTab('tasks', this)">🔔 Tasks & Reminders</button>` : ''}
+                <button class="accordion-tab-btn ${defaultTab === 'history' ? 'active' : ''}" data-tab="history" onclick="switchAccordionTab('history', this)">🕐 History</button>
+                <button class="accordion-tab-btn" data-tab="results" onclick="switchAccordionTab('results', this)">📋 Results</button>
+            </div>
+            <div id="accTabTasks" class="accordion-tab-content" style="${defaultTab === 'tasks' ? '' : 'display:none;'}">
+                <div id="accTasksList"><p style="color:var(--muted); font-size:13px;">Loading…</p></div>
+                <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border);">
+                    <label style="font-size:12px; color:var(--muted);">Add a task</label>
+                    <input type="text" id="accNewTaskTitle" placeholder="e.g. Call back Tuesday" style="width:100%; margin:6px 0;">
+                    <div style="display:flex; gap:8px;">
+                        <input type="date" id="accNewTaskDue" style="flex:1;">
+                        <select id="accNewTaskPriority" style="width:110px;">
+                            <option value="1">Low</option>
+                            <option value="2" selected>Medium</option>
+                            <option value="3">High</option>
+                        </select>
+                    </div>
+                    <textarea id="accNewTaskDesc" placeholder="Notes (optional)" style="width:100%; height:50px; margin-top:8px; background:#0f1115; border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px; font-size:13px;"></textarea>
+                    <button onclick="addAccordionTask()" style="margin-top:8px;">Add Task</button>
+                </div>
+            </div>
+            <div id="accTabHistory" class="accordion-tab-content" style="${defaultTab === 'history' ? '' : 'display:none;'}">
+                <div id="accHistoryFreshness" style="font-size:13px; padding:10px 12px; border-radius:6px; margin-bottom:14px;"></div>
+                <div id="accHistoryTimeline"></div>
+            </div>
+            <div id="accTabResults" class="accordion-tab-content" style="display:none;">
+                <div id="accResultsContent"><p style="color:var(--muted); font-size:13px;">Loading…</p></div>
+            </div>
+        </div>
+    `;
 }
 
-function loadFlozyTasks() {
-    const list = document.getElementById('flozyTasksList');
-    fetch(`../api/flozy_lead_tasks.php?profile_id=${pendingFlozyTasksProfileId}`)
+function toggleAccordionRow(btnEl, profileId, username) {
+    const tr = $(btnEl).closest('tr');
+
+    if (currentAccordionProfileId === profileId && currentAccordionTr && currentAccordionTr.is(tr)) {
+        closeAccordionRow();
+        return;
+    }
+
+    closeAccordionRow(); // single-open — collapse whatever else was expanded first
+
+    table.row(tr).child(buildAccordionPanelHtml(profileId, username)).show();
+    tr.addClass('shown');
+    $(btnEl).text('▼');
+
+    currentAccordionTr = tr;
+    currentAccordionProfileId = profileId;
+    currentAccordionUsername = username;
+    accordionLoadedTabs = {};
+
+    loadAccordionTabContent(currentView === 'flozy' ? 'tasks' : 'history');
+}
+
+function closeAccordionRow() {
+    if (currentAccordionTr) {
+        const row = table.row(currentAccordionTr);
+        if (row.child.isShown()) {
+            row.child.hide();
+        }
+        currentAccordionTr.removeClass('shown');
+        currentAccordionTr.find('.accordion-toggle-btn').text('▶');
+    }
+    currentAccordionTr = null;
+    currentAccordionProfileId = null;
+    currentAccordionUsername = null;
+    accordionLoadedTabs = {};
+}
+
+function switchAccordionTab(tab, btnEl) {
+    document.querySelectorAll('.accordion-tab-btn').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    ['tasks', 'history', 'results'].forEach(t => {
+        const el = document.getElementById('accTab' + t.charAt(0).toUpperCase() + t.slice(1));
+        if (el) el.style.display = (t === tab) ? 'block' : 'none';
+    });
+    loadAccordionTabContent(tab);
+}
+
+function loadAccordionTabContent(tab) {
+    if (accordionLoadedTabs[tab]) return; // already loaded once — tab switches don't refetch
+    accordionLoadedTabs[tab] = true;
+    if (tab === 'tasks') loadAccordionTasks();
+    else if (tab === 'history') loadAccordionHistory();
+    else if (tab === 'results') loadAccordionResults();
+}
+
+function loadAccordionTasks() {
+    const list = document.getElementById('accTasksList');
+    if (!list) return;
+    fetch(`../api/flozy_lead_tasks.php?profile_id=${currentAccordionProfileId}`)
         .then(r => r.json())
         .then(res => {
             if (!res.success) {
@@ -1710,7 +1868,7 @@ function loadFlozyTasks() {
                         ${dueLine}
                         <div style="margin-top:8px; display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-size:11px; color:var(--muted);">${statusLabels[t.status] || 'Unknown'}</span>
-                            ${!isDone ? `<button class="small ghost" onclick="completeFlozyTask(${t.id})">✅ Mark Done</button>` : ''}
+                            ${!isDone ? `<button class="small ghost" onclick="completeAccordionTask(${t.id})">✅ Mark Done</button>` : ''}
                         </div>
                     </div>
                 `;
@@ -1722,44 +1880,44 @@ function loadFlozyTasks() {
         });
 }
 
-function addFlozyTask() {
-    const title = document.getElementById('newFlozyTaskTitle').value.trim();
+function addAccordionTask() {
+    const title = document.getElementById('accNewTaskTitle').value.trim();
     if (!title) { notifyWarning('Title is required.'); return; }
 
     fetch('../api/flozy_lead_tasks.php', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             action: 'add',
-            profile_id: pendingFlozyTasksProfileId,
+            profile_id: currentAccordionProfileId,
             title: title,
-            description: document.getElementById('newFlozyTaskDesc').value,
-            due_date: document.getElementById('newFlozyTaskDue').value,
-            priority: document.getElementById('newFlozyTaskPriority').value,
+            description: document.getElementById('accNewTaskDesc').value,
+            due_date: document.getElementById('accNewTaskDue').value,
+            priority: document.getElementById('accNewTaskPriority').value,
         })
     })
         .then(r => r.json())
         .then(res => {
             if (!res.success) { notifyError('Could not add task.', res.error); return; }
             notifyInfo('Task added.');
-            document.getElementById('newFlozyTaskTitle').value = '';
-            document.getElementById('newFlozyTaskDue').value = '';
-            document.getElementById('newFlozyTaskDesc').value = '';
-            loadFlozyTasks();
+            document.getElementById('accNewTaskTitle').value = '';
+            document.getElementById('accNewTaskDue').value = '';
+            document.getElementById('accNewTaskDesc').value = '';
+            loadAccordionTasks();
             loadOverdueTasks(); // a new task could theoretically be added with a past due date
         })
         .catch(err => notifyError('Could not add task.', err));
 }
 
-function completeFlozyTask(taskId) {
+function completeAccordionTask(taskId) {
     fetch('../api/flozy_lead_tasks.php', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'complete', profile_id: pendingFlozyTasksProfileId, task_id: taskId })
+        body: JSON.stringify({ action: 'complete', task_id: taskId })
     })
         .then(r => r.json())
         .then(res => {
             if (!res.success) { notifyError('Could not mark task complete.', res.error); return; }
             notifyInfo('Marked complete.');
-            loadFlozyTasks();
+            loadAccordionTasks();
             loadOverdueTasks(); // completing a task may remove it from the overdue list
         })
         .catch(err => notifyError('Could not mark task complete.', err));
@@ -1798,15 +1956,15 @@ const followupTypeLabels = {
     custom_survey: '📊 Free Custom Survey Offer',
 };
 
-function openGenerationHistory(profileId, username) {
-    document.getElementById('genHistoryTitle').textContent = `🕐 Generation History — @${username}`;
-    document.getElementById('genHistoryModal').style.display = 'flex';
-    document.getElementById('genHistoryTimeline').innerHTML = '<p style="color:var(--muted); font-size:13px;">Loading…</p>';
+function loadAccordionHistory() {
+    const freshnessEl = document.getElementById('accHistoryFreshness');
+    const timeline = document.getElementById('accHistoryTimeline');
+    if (!timeline) return;
+    timeline.innerHTML = '<p style="color:var(--muted); font-size:13px;">Loading…</p>';
 
-    fetch(`../api/generation_history.php?profile_id=${profileId}`)
+    fetch(`../api/generation_history.php?profile_id=${currentAccordionProfileId}`)
         .then(r => r.json())
         .then(res => {
-            const freshnessEl = document.getElementById('genHistoryFreshness');
             if (res.days_since_scrape === null) {
                 freshnessEl.style.background = 'rgba(96,165,250,0.15)';
                 freshnessEl.innerHTML = 'No content scraped for this lead yet.';
@@ -1817,7 +1975,6 @@ function openGenerationHistory(profileId, username) {
                     (stale ? ' — content may be stale, worth a fresh Verify+Personalize before the next touchpoint.' : '');
             }
 
-            const timeline = document.getElementById('genHistoryTimeline');
             if (!res.timeline.length) {
                 timeline.innerHTML = '<p style="color:var(--muted); font-size:13px;">Nothing generated for this lead yet.</p>';
                 return;
@@ -1838,10 +1995,10 @@ function openGenerationHistory(profileId, username) {
                 `;
             }).join('');
         })
-        .catch(err => notifyError('Could not load generation history.', err));
-}
-function closeGenerationHistory() {
-    document.getElementById('genHistoryModal').style.display = 'none';
+        .catch(err => {
+            timeline.innerHTML = '<p style="color:var(--danger); font-size:13px;">Could not load generation history.</p>';
+            console.error('[ERROR] Could not load generation history.', err);
+        });
 }
 
 function openSweepHistory() {
@@ -1911,21 +2068,21 @@ async function runBudgetSweep() {
 // functional columns, not optional). Matches the `visible` defaults set on
 // the actual column definitions further down.
 const toggleableColumns = [
-    { idx: 2,  label: 'Full Name' },
-    { idx: 3,  label: 'Niche' },
-    { idx: 4,  label: 'Followers' },
-    { idx: 5,  label: 'Engagement %' },
-    { idx: 6,  label: 'Score' },
-    { idx: 7,  label: 'Avg Likes' },
-    { idx: 8,  label: 'Avg Comments' },
-    { idx: 9,  label: 'Posts/Week' },
-    { idx: 10, label: 'Bio' },
-    { idx: 11, label: 'Link' },
-    { idx: 12, label: 'Last Updated' },
-    { idx: 13, label: 'Notes' },
-    { idx: 14, label: 'Progress' },
-    { idx: 15, label: 'Pipeline Stage' },
-    { idx: 16, label: 'Outreach' },
+    { idx: 3,  label: 'Full Name' },
+    { idx: 4,  label: 'Niche' },
+    { idx: 5,  label: 'Followers' },
+    { idx: 6,  label: 'Engagement %' },
+    { idx: 7,  label: 'Score' },
+    { idx: 8,  label: 'Avg Likes' },
+    { idx: 9,  label: 'Avg Comments' },
+    { idx: 10, label: 'Posts/Week' },
+    { idx: 11, label: 'Bio' },
+    { idx: 12, label: 'Link' },
+    { idx: 13, label: 'Last Updated' },
+    { idx: 14, label: 'Notes' },
+    { idx: 15, label: 'Progress' },
+    { idx: 16, label: 'Pipeline Stage' },
+    { idx: 17, label: 'Outreach' },
 ];
 
 function buildColumnToggleMenu() {
@@ -2000,8 +2157,8 @@ async function runVerification(profileId) {
         .then(res => {
             hideLoadingToast();
             if (!res.success) { notifyError('Verification run failed.', res.error); return; }
-            notifyInfo('Verification & personalization ready.');
-            showResultsModal(res.verification_summary, res.draft_hook, res.draft_message);
+            notifyInfo('Verification & personalization ready — see Results in the row below.');
+            showAccordionResultsIfOpen(profileId, res.verification_summary, res.draft_hook, res.draft_message);
         })
         .catch(err => { hideLoadingToast(); notifyError('Verification run failed.', err); });
 }
@@ -2016,34 +2173,72 @@ function rerunAiOnly(profileId) {
         .then(res => {
             hideLoadingToast();
             if (!res.success) { notifyError('AI retry failed.', res.error); return; }
-            notifyInfo('AI analysis ready.');
-            showResultsModal(res.verification_summary, res.draft_hook, res.draft_message);
+            notifyInfo('AI analysis ready — see Results in the row below.');
+            showAccordionResultsIfOpen(profileId, res.verification_summary, res.draft_hook, res.draft_message);
         })
         .catch(err => { hideLoadingToast(); notifyError('AI retry failed.', err); });
 }
 
-function viewResults(profileId) {
-    fetch(`../api/content_analysis_result.php?profile_id=${profileId}`)
+function loadAccordionResults() {
+    const container = document.getElementById('accResultsContent');
+    if (!container) return;
+    fetch(`../api/content_analysis_result.php?profile_id=${currentAccordionProfileId}`)
         .then(r => r.json())
         .then(res => {
             if (!res.latest_run || res.latest_run.status !== 'done') {
-                notifyWarning('No completed verification results yet for this lead.');
+                container.innerHTML = '<p style="color:var(--muted); font-size:13px;">No completed verification results yet for this lead.</p>';
                 return;
             }
-            showResultsModal(res.latest_run.verification_summary, res.latest_run.draft_hook, res.latest_run.draft_message);
+            renderAccordionResults(res.latest_run.verification_summary, res.latest_run.draft_hook, res.latest_run.draft_message);
         })
-        .catch(err => notifyError('Could not load results.', err));
+        .catch(err => {
+            container.innerHTML = '<p style="color:var(--danger); font-size:13px;">Could not load results.</p>';
+            console.error('[ERROR] Could not load results.', err);
+        });
 }
 
-function showResultsModal(verification, hook, followup) {
-    document.getElementById('resultsVerification').textContent = verification;
-    document.getElementById('resultsHook').value = hook || '(hook parsing failed — check the follow-up box, the content is probably all in there)';
-    document.getElementById('resultsFollowup').value = followup;
-    document.getElementById('resultsModal').style.display = 'flex';
+function renderAccordionResults(verification, hook, followup) {
+    const container = document.getElementById('accResultsContent');
+    if (!container) return;
+    // Structure via innerHTML, but assign text/value via JS properties
+    // (not template-interpolated into the HTML string) — verification/
+    // hook/followup are AI-generated free text and could contain
+    // characters that would otherwise break out of the markup.
+    container.innerHTML = `
+        <h3 style="font-size:12px; color:var(--muted); text-transform:uppercase; margin:0 0 6px;">Verification (does the gameplan hold up against real comments?)</h3>
+        <p id="accResultsVerification" style="font-size:13px; line-height:1.6; background:#0f1115; padding:12px; border-radius:6px; margin:0 0 18px;"></p>
+
+        <h3 style="font-size:12px; color:var(--accent); text-transform:uppercase; margin:0 0 6px;">🎣 Hook (the opener — this is what shows in their DM preview/notification, decides if they even tap in)</h3>
+        <textarea id="accResultsHook" style="width:100%; height:50px; background:#0f1115; border:1px solid var(--accent); color:var(--text); padding:10px; border-radius:6px; font-size:14px; font-weight:600;"></textarea>
+        <button onclick="copyText('accResultsHook', 'accCopyHookStatus')" style="margin-top:8px;">Copy Hook</button>
+        <span id="accCopyHookStatus" style="margin-left:10px; font-size:12px; color:var(--muted);"></span>
+
+        <h3 style="font-size:12px; color:var(--muted); text-transform:uppercase; margin:18px 0 6px;">Follow-up (only matters once they've opened it — edit freely before sending)</h3>
+        <textarea id="accResultsFollowup" style="width:100%; height:100px; background:#0f1115; border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:13px;"></textarea>
+        <button onclick="copyText('accResultsFollowup', 'accCopyFollowupStatus')" style="margin-top:8px;">Copy Follow-up</button>
+        <span id="accCopyFollowupStatus" style="margin-left:10px; font-size:12px; color:var(--muted);"></span>
+    `;
+    document.getElementById('accResultsVerification').textContent = verification;
+    document.getElementById('accResultsHook').value = hook || '(hook parsing failed — check the follow-up box, the content is probably all in there)';
+    document.getElementById('accResultsFollowup').value = followup;
 }
-function closeResultsModal() {
-    document.getElementById('resultsModal').style.display = 'none';
+
+/**
+ * Called after a fresh Verify+Personalize / Retry AI Only completes. If
+ * this exact lead's accordion row happens to be open right now, refresh
+ * its Results tab in place with the data we already have (no extra
+ * fetch). If it's not open (different row, different page, or nothing
+ * expanded), there's nothing to update on screen — the data is saved
+ * server-side regardless, so opening Results whenever will show it fine.
+ */
+function showAccordionResultsIfOpen(profileId, verification, hook, followup) {
+    if (currentAccordionProfileId !== profileId) return;
+    accordionLoadedTabs.results = true;
+    renderAccordionResults(verification, hook, followup);
+    const resultsBtn = document.querySelector('.accordion-tab-btn[data-tab="results"]');
+    if (resultsBtn) switchAccordionTab('results', resultsBtn);
 }
+
 function copyText(boxId, statusId) {
     const box = document.getElementById(boxId);
     box.select();
@@ -2119,6 +2314,10 @@ loadNicheOptions();
 loadScoreWeights();
 loadBudgetSweepInfo();
 loadStats();
+if (localStorage.getItem('cdb_overdue_collapsed') === '1') {
+    document.getElementById('overdueTasksBody').style.display = 'none';
+    document.getElementById('overdueTasksChevron').textContent = '▶';
+}
 loadOverdueTasks();
 initTable();
 buildColumnToggleMenu();

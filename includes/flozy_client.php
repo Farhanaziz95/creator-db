@@ -174,6 +174,69 @@ function create_opportunity_for_lead(PDO $pdo, int $profileId, int $flozyLeadId,
 }
 
 /**
+ * Moves an EXISTING Opportunity to a named pipeline stage (by name, not
+ * by ID — the caller doesn't know the numeric ID, only a real stage name
+ * from config/flozy.php). Shared by api/toggle_outreach.php (moves to
+ * the "contacted" stage on mark-outreached) and api/archive_flozy_lead.php
+ * (moves to "Not A Right Fit" on archive). Also updates the local
+ * current_stage/current_stage_tag cache on success, same as every other
+ * stage-touching function in this file.
+ *
+ * Returns ['success' => bool, 'skipped' => bool, 'error' => ?string, ...]
+ * — 'skipped' (not 'success' => false) is used for the two non-error
+ * cases where there's genuinely nothing to do: no stage name configured,
+ * or no Opportunity ID on record yet for this lead. Callers should treat
+ * skipped as "fine, nothing happened" rather than a failure to surface.
+ */
+function move_opportunity_to_named_stage(PDO $pdo, int $profileId, string $stageName): array
+{
+    if (trim($stageName) === '') {
+        return ['success' => false, 'skipped' => true, 'error' => null];
+    }
+
+    $stmt = $pdo->prepare("SELECT flozy_opportunity_id FROM flozy_leads WHERE profile_id = ?");
+    $stmt->execute([$profileId]);
+    $opportunityId = $stmt->fetchColumn();
+
+    if (!$opportunityId) {
+        return [
+            'success' => false, 'skipped' => true,
+            'error'   => 'No Flozy Opportunity ID on record yet — click 🔄 Sync on this lead first.',
+        ];
+    }
+
+    $stageLookup = build_stage_lookup();
+    $targetStageId = null;
+    $targetStageName = null;
+    $targetStageTag = null;
+    foreach ($stageLookup as $id => $info) {
+        if (strcasecmp($info['name'], $stageName) === 0) {
+            $targetStageId = $id;
+            $targetStageName = $info['name'];
+            $targetStageTag = $info['tag'];
+            break;
+        }
+    }
+
+    if (!$targetStageId) {
+        return [
+            'success' => false, 'skipped' => false,
+            'error'   => "No pipeline stage named '{$stageName}' found — check config/flozy.php matches a real stage name.",
+        ];
+    }
+
+    $result = flozy_request('PUT', '/opportunities/' . $opportunityId, ['stage_id' => $targetStageId]);
+    if (!$result['success']) {
+        return ['success' => false, 'skipped' => false, 'error' => $result['error']];
+    }
+
+    $stmt = $pdo->prepare("UPDATE flozy_leads SET current_stage = ?, current_stage_tag = ?, stage_synced_at = NOW() WHERE profile_id = ?");
+    $stmt->execute([$targetStageName, $targetStageTag, $profileId]);
+
+    return ['success' => true, 'skipped' => false, 'error' => null, 'stage_name' => $targetStageName, 'stage_tag' => $targetStageTag];
+}
+
+/**
  * Paginates through EVERY task in the account and returns them all,
  * unfiltered. GET /tasks has no lead_id filter (confirmed against
  * Flozy's real docs), so both api/flozy_lead_tasks.php (filters to one

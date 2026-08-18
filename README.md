@@ -31,6 +31,105 @@ This clears the AI queue automatically every few minutes.
    - Add arguments: `C:\xampp\htdocs\creator-db\jobs\process_niche_queue.php`
 4. Save. It'll now run quietly in the background, pulling ~10 profiles per run through the free OpenRouter models (keyword-matched profiles never touch this — only the leftovers with no business category and no keyword match).
 
+## Round 34: Accordion, Overdue panel polish, outreach→Contacted, quick archive
+
+Four changes this round, all from the same conversation.
+
+### 1. Accordion — Tasks/History/Results moved from modals into the table
+As discussed in Round 33's brainstorm: **Tasks & Reminders, History, and
+Results** are no longer modals — they're now an expandable row (▶ button,
+second column, left of Username). Clicking it reveals a tabbed panel
+inline; **Follow-up stays a modal**, unchanged, since it's a multi-step
+flow (pick type → conditionally describe what you're sharing → generate →
+copy) that doesn't compress well into a row.
+
+- **Single-open accordion** — expanding one row's panel collapses
+  whichever other row was open. No two panels fight for space at once.
+- **Lazy-loaded per tab** — opening a row loads only its first tab
+  (Tasks on the Flozy tab, History on Active/Future); switching tabs
+  fetches on first view, cached after that. Same cost as the old modals,
+  just relocated — this was the actual point of the earlier "won't this
+  be slower?" question: it isn't, because nothing preloads.
+- **Active/Future tabs** get History + Results (no Tasks tab — that needs
+  a pushed Flozy lead). **Flozy tab** gets all three. **Archived** gets no
+  expand button — nothing to show there.
+- `runVerification()` / `rerunAiOnly()` now populate the Results tab
+  directly with the fresh response instead of a modal — if that lead's
+  row happens to already be expanded, it updates in place; otherwise the
+  result is just saved server-side as always, ready whenever you open it.
+- **Care taken with reload interaction:** `table.ajax.reload()` recreates
+  row DOM nodes, which would otherwise silently detach an open accordion
+  mid-view. Actions that touch the SAME open row's data (marking a task
+  done, adding a task) now refresh the accordion's own content in place
+  instead of forcing a full table reload. A `draw` event listener also
+  resets accordion tracking state cleanly if a reload does happen to tear
+  down the currently-open row, so nothing is left pointing at a dead
+  element.
+- All the old modal HTML/JS (`#flozyTasksModal`, `#genHistoryModal`,
+  `#resultsModal` and their functions) were fully removed, not just
+  hidden — confirmed zero leftover references before shipping.
+
+**Heads up on column indices:** inserting the new expand-toggle column
+shifted every column index after it by one. Updated everywhere that
+mattered — `api/profiles.php`'s server-side sort-column map, the default
+sort order, and the `toggleableColumns` list for the "👁 Columns" menu.
+Same caveat as previous column changes: cached DataTables state
+(`stateSave`) may reset once on first load after this update.
+
+### 2. Overdue panel — collapsible, count in the header, quick-done button
+The panel from Round 33 could only grow — now:
+- **Collapsible** — click the header to collapse/expand; state persists
+  across reloads (`localStorage`).
+- **Count in the heading** — "⚠️ Overdue Tasks (5)" even while collapsed,
+  so you always know how many without expanding.
+- **Max-height + scroll** (340px) on the list itself, so even fully
+  expanded with many items it can't push the rest of the dashboard down
+  indefinitely.
+- **✅ Done button directly on each item** — the actual "quick button" ask.
+  No more needing to open anything first; it hits the same `PUT
+  /tasks/{id}` completion endpoint directly from the panel.
+- "Open →" still exists alongside it for when you want more context —
+  since a lead referenced here could be on any page of a paginated table,
+  it switches to the Flozy tab and searches for that username (lands the
+  row on page 1) rather than attempting a fragile cross-page auto-expand.
+
+### 3. Outreach toggle now also moves the Opportunity to "Contacted"
+You flagged that marking a lead outreached didn't move its stage in
+Flozy. Fixed — with one thing still needing you:
+
+- New shared `move_opportunity_to_named_stage()` in
+  `includes/flozy_client.php`, reused by both this and the new archive
+  action below.
+- `api/toggle_outreach.php` now calls it when marking outreached (never
+  on undo — same "undo is local-only" reasoning as the task-logging
+  feature from Round 29).
+- **`config/flozy.php` → `default_contacted_stage_name` is blank on
+  purpose.** Unlike "New Lead" and "Not A Right Fit," I've never seen you
+  use an exact "Contacted" stage name — guessing it risked shipping
+  something that silently does nothing, or worse, fails against the wrong
+  stage. Until this is filled in with your real stage name, marking
+  outreached still works exactly as before (local flag + Flozy task log)
+  — the stage move is simply skipped, not an error.
+
+### 4. Quick Archive from Sent to Flozy → moves Opportunity to "Not A Right Fit"
+New **🗄️ Archive (Not a Right Fit)** action (row-level and bulk) on the
+Sent to Flozy tab.
+
+- **Not the same as "Remove from Flozy."** This does NOT delete anything
+  in Flozy — the Lead and Opportunity stay fully intact there, just moved
+  to the "Not A Right Fit" stage (confirmed real stage name, used already
+  since Round 22's sweep exclusions).
+- Locally: unlinks the `flozy_leads` row (so it drops off the Sent to
+  Flozy tab) and sets the profile to archived (so it reappears under
+  Archived) — same local effect as "Remove from Flozy" already has,
+  minus the destructive Flozy-side delete.
+- New `api/archive_flozy_lead.php`, single (`action: 'one'`) and bulk
+  (`action: 'selected'`) — bulk paced at ~3 req/sec like the other
+  bulk Flozy-writing actions.
+- If pushing this profile again later, a fresh Lead/Opportunity gets
+  created — the old ones aren't reused, but they're not lost either,
+  they're just sitting at "Not A Right Fit" in your real pipeline.
+
 ## Round 33: The actual "reminder" — an Overdue panel
 
 Fair pushback on Round 32: a task view you have to remember to open isn't
