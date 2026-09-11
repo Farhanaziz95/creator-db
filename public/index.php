@@ -103,6 +103,8 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
     .tab-btn.active { background: var(--accent2); color: #0f1115; border-color: var(--accent2); }
     .legend-swatch { display:inline-block; width:14px; height:14px; border-radius:3px; margin-right:6px; vertical-align:middle; }
     .progress-badges { white-space: nowrap; font-size: 13px; }
+    .bio-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+    .action-icon-group { display: flex; flex-wrap: wrap; gap: 4px; max-width: 210px; }
     .action-menu { position: relative; display: inline-block; white-space: nowrap; }
     .action-menu-btn { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 4px 9px; border-radius: 4px; cursor: pointer; font-size: 13px; margin-left: 4px; }
     .action-menu-content { display: none; position: absolute; right: 0; top: 100%; margin-top: 4px; background: #1c2029; border: 1px solid var(--border); border-radius: 6px; min-width: 190px; z-index: 100; box-shadow: 0 6px 16px rgba(0,0,0,0.5); overflow: hidden; }
@@ -1055,6 +1057,17 @@ function actionIconBtn(icon, title, onclickJs, style) {
     return `<button class="small ghost" style="${style || ''}" title="${title}" onclick="${onclickJs}">${icon}</button>`;
 }
 
+/**
+ * Wraps a set of actionIconBtn() buttons in a wrapping flex container
+ * (.action-icon-group) instead of a plain inline run — Flozy rows in
+ * particular have enough icons that inline flow was either stacking
+ * awkwardly or forcing the row too wide; this wraps them into a tidy
+ * grid instead, capped to a fixed width.
+ */
+function actionIconGroup(buttons) {
+    return `<div class="action-icon-group">${buttons.join('')}</div>`;
+}
+
 function initTable() {
     table = $('#profilesTable').DataTable({
         serverSide: true,
@@ -1137,7 +1150,19 @@ function initTable() {
                     return `<span title="Healthy posting cadence">${val}/wk</span>`;
                 }
             },
-            { data: 'biography', visible: false, render: b => b ? (b.length > 60 ? b.substring(0, 60) + '…' : b) : '' },
+            {
+                // Trimmed harder (40 vs the old 60) and forced to a
+                // single line via CSS (.bio-cell below) — a long bio
+                // was wrapping onto 2-3 lines and blowing up every
+                // row's height even with the JS-side truncation.
+                data: 'biography', visible: false, className: 'bio-cell',
+                render: b => {
+                    if (!b) return '';
+                    const safe = b.replace(/"/g, '&quot;');
+                    const short = b.length > 40 ? b.substring(0, 40) + '…' : b;
+                    return `<span title="${safe}">${short}</span>`;
+                }
+            },
             { data: 'external_url', visible: false, render: u => u ? `<a class="ext-link" href="${u}" target="_blank">link</a>` : '' },
             { data: 'imported_at' },
             {
@@ -1230,7 +1255,7 @@ function initTable() {
                 orderable: false,
                 render: function (row) {
                     if (currentView === 'active') {
-                        return [
+                        return actionIconGroup([
                             actionIconBtn('🚀', 'Send to Flozy', `pushOneToFlozy(${row.id})`, 'background:#5B7BFF;'),
                             actionIconBtn('📄', 'Upload Gameplan', `triggerGameplanUpload(${row.id})`),
                             actionIconBtn('🔍', 'Verify + Personalize', `runVerification(${row.id})`),
@@ -1238,10 +1263,10 @@ function initTable() {
                             actionIconBtn('🔁', 'Retry AI Only', `rerunAiOnly(${row.id})`),
                             actionIconBtn('⏭️', 'Send to Future', `sendToFuture(${row.id})`),
                             actionIconBtn('🗄️', 'Archive', `archiveOne(${row.id})`, 'background:var(--danger);'),
-                        ].join(' ');
+                        ]);
                     }
                     if (currentView === 'future') {
-                        return [
+                        return actionIconGroup([
                             actionIconBtn('🔙', 'Restore to Active', `restoreOne(${row.id})`),
                             actionIconBtn('📄', 'Upload Gameplan', `triggerGameplanUpload(${row.id})`),
                             actionIconBtn('🔍', 'Verify + Personalize', `runVerification(${row.id})`),
@@ -1249,13 +1274,13 @@ function initTable() {
                             actionIconBtn('🔁', 'Retry AI Only', `rerunAiOnly(${row.id})`),
                             actionIconBtn('🚀', 'Send to Flozy', `pushOneToFlozy(${row.id})`, 'background:#5B7BFF;'),
                             actionIconBtn('🗄️', 'Archive', `archiveOne(${row.id})`, 'background:var(--danger);'),
-                        ].join(' ');
+                        ]);
                     }
                     if (currentView === 'archived') {
-                        return actionIconBtn('🔙', 'Restore to Active', `restoreOne(${row.id})`);
+                        return actionIconGroup([actionIconBtn('🔙', 'Restore to Active', `restoreOne(${row.id})`)]);
                     }
                     // flozy view
-                    return [
+                    return actionIconGroup([
                         actionIconBtn('🔍', 'Verify + Personalize', `runVerification(${row.id})`, 'background:#5B7BFF;'),
                         actionIconBtn('🔎', 'Verify Only (scrape, no AI)', `runVerifyOnly(${row.id})`),
                         actionIconBtn('🔀', 'Move Stage', `openMoveStageModal(${row.id}, '${row.username}')`),
@@ -1265,7 +1290,7 @@ function initTable() {
                         !row.flozy_contact_id ? actionIconBtn('📧', 'Push Contact', `pushContactOne(${row.id})`) : '',
                         actionIconBtn('🗄️', 'Archive (Not a Right Fit)', `archiveFlozyLead(${row.id}, '${row.username}')`, 'background:var(--danger);'),
                         actionIconBtn('❌', 'Remove from Flozy', `removeFromFlozy(${row.id})`, 'background:var(--danger);'),
-                    ].join(' ');
+                    ]);
                 }
             },
         ],
