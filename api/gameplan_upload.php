@@ -4,6 +4,7 @@ setup_json_error_handling();
 
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../vendor/autoload.php'; // Composer's smalot/pdfparser
+require_once __DIR__ . '/../includes/gameplan_storage.php';
 
 header('Content-Type: application/json');
 
@@ -55,39 +56,15 @@ try {
 }
 
 // One gameplan per lead — replace if one already exists (gameplans don't
-// need history the way creator snapshots do)
-$stmt = $pdo->prepare("SELECT id, stored_filename FROM gameplans WHERE profile_id = ?");
-$stmt->execute([$profileId]);
-$existing = $stmt->fetch();
-
-if ($existing) {
-    $oldPath = $storageDir . '/' . $existing['stored_filename'];
-    if (file_exists($oldPath)) {
-        unlink($oldPath);
-    }
-    $stmt = $pdo->prepare("UPDATE gameplans SET original_filename = ?, stored_filename = ?, extracted_text = ?, uploaded_at = NOW() WHERE profile_id = ?");
-    $stmt->execute([$originalName, $storedFilename, $extractedText, $profileId]);
-} else {
-    $stmt = $pdo->prepare("INSERT INTO gameplans (profile_id, original_filename, stored_filename, extracted_text) VALUES (?, ?, ?, ?)");
-    $stmt->execute([$profileId, $originalName, $storedFilename, $extractedText]);
-}
-
-// If this lead is already in Flozy with a gameplan-related task already
-// created, mark it complete now instead of leaving it as an open todo.
-require_once __DIR__ . '/../includes/flozy_client.php';
-
-$stmt = $pdo->prepare("SELECT flozy_task_id FROM flozy_lead_tasks WHERE profile_id = ? AND title LIKE '%gameplan%'");
-$stmt->execute([$profileId]);
-$taskIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
-
-foreach ($taskIds as $taskId) {
-    flozy_request('PUT', '/tasks/' . $taskId, ['status' => 3]); // 3 = completed
-}
+// need history the way creator snapshots do). Round 35: this DB write +
+// Flozy task-completion logic moved to includes/gameplan_storage.php so
+// it's shared with the new bulk upload path.
+$result = save_gameplan_for_profile($pdo, $profileId, $originalName, $storedFilename, $extractedText, $storageDir);
 
 echo json_encode([
     'success' => true,
-    'text_extracted' => $extractedText !== '',
-    'text_length' => strlen($extractedText),
-    'flozy_tasks_completed' => count($taskIds),
+    'text_extracted' => $result['text_extracted'],
+    'text_length' => $result['text_length'],
+    'flozy_tasks_completed' => $result['flozy_tasks_completed'],
 ]);
 }

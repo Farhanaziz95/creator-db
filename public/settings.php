@@ -71,6 +71,22 @@ function saveBrandVoice() {
     });
 }
 
+function loadGameplanMatchPrefix() {
+    fetch('../api/gameplan_match_settings.php')
+        .then(r => r.json())
+        .then(res => { document.getElementById('gameplanMatchPrefix').value = res.match_prefix; });
+}
+function saveGameplanMatchPrefix() {
+    const prefix = document.getElementById('gameplanMatchPrefix').value;
+    fetch('../api/gameplan_match_settings.php', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ match_prefix: prefix })
+    }).then(() => {
+        document.getElementById('gameplanMatchPrefixStatus').textContent = 'Saved — applies to the next Bulk Upload Gameplans preview.';
+        notifyInfo('Gameplan match prefix saved.');
+    });
+}
+
 function loadPromptTemplates() {
     fetch('../api/prompt_templates.php')
         .then(r => r.json())
@@ -103,6 +119,7 @@ function savePromptTemplate(id) {
 
 loadBrandVoice();
 loadPromptTemplates();
+loadGameplanMatchPrefix();
 </script>
 
 <a class="back" href="index.php">← Back to Dashboard</a>
@@ -118,6 +135,20 @@ loadPromptTemplates();
     <textarea id="brandVoiceText" placeholder="e.g. Casual, warm, no corporate-speak, short sentences, never use exclamation points..." style="width:100%; height:80px; background:#0f1115; border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:13px;"></textarea>
     <button onclick="saveBrandVoice()" style="margin-top:8px;">Save Brand Voice</button>
     <span id="brandVoiceStatus" style="margin-left:10px; font-size:12px; color:var(--muted);"></span>
+</div>
+
+<div class="panel">
+    <h2 style="font-size:14px; color:var(--muted); text-transform:uppercase; margin:0 0 12px;">Bulk Gameplan Upload — Match Prefix</h2>
+    <p style="font-size:12px; color:var(--muted); margin:0 0 10px;">
+        "Bulk Upload Gameplans" (dashboard → Filters &amp; Archiving) matches each PDF's
+        <b>first line of extracted text</b> against this prefix to find the username — e.g.
+        with the default below, both <code>Monetisation Audit: Full Name (@username)</code> and
+        <code>Monetisation Audit: @username</code> match. Leave blank to match any first line
+        that contains an <code>@username</code>, with no prefix required.
+    </p>
+    <input type="text" id="gameplanMatchPrefix" placeholder="e.g. Monetisation Audit:" style="width:100%; max-width:400px; background:#0f1115; border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:6px; font-size:13px;">
+    <button onclick="saveGameplanMatchPrefix()" style="margin-top:8px;">Save</button>
+    <span id="gameplanMatchPrefixStatus" style="margin-left:10px; font-size:12px; color:var(--muted);"></span>
 </div>
 
 <div class="panel">
@@ -370,6 +401,31 @@ loadNicheSelects();
     <button onclick="recomputeAllScores()" style="margin-top:12px;">Recompute All Scores</button>
     <span id="recomputeStatus" style="margin-left:10px; font-size:12px; color:var(--muted);"></span>
 </div>
+
+<div class="panel">
+    <h2 style="font-size:14px; color:var(--muted); text-transform:uppercase; margin:0 0 12px;">Email Extraction</h2>
+    <p style="font-size:12px; color:var(--muted); margin:0 0 10px;">
+        Every import already extracts an email from the bio automatically. This is a
+        one-time catch-up for profiles imported before that existed — checks each
+        profile's latest bio and fills in <code>email</code> if the regex finds one.
+        Never overwrites an email already on file (including ones you've hand-corrected).
+    </p>
+    <button onclick="backfillEmails()">Backfill Emails</button>
+    <span id="backfillEmailsStatus" style="margin-left:10px; font-size:12px; color:var(--muted);"></span>
+</div>
+
+<script>
+function backfillEmails() {
+    document.getElementById('backfillEmailsStatus').textContent = 'Checking bios…';
+    fetch('../api/backfill_emails.php')
+        .then(r => r.json())
+        .then(res => {
+            document.getElementById('backfillEmailsStatus').textContent =
+                `Done — checked ${res.checked}, found ${res.found} new email(s), ${res.skipped_existing} already had one.`;
+            notifyInfo(`Backfilled ${res.found} email(s).`);
+        });
+}
+</script>
 
 <script>
 function recomputeAllScores() {

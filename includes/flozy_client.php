@@ -237,6 +237,59 @@ function move_opportunity_to_named_stage(PDO $pdo, int $profileId, string $stage
 }
 
 /**
+ * Round 35, item #1: pushes a Contact (POST /leads/{leadId}/contacts) for
+ * an already-pushed lead, using whatever email is currently on file for
+ * this profile. Mirrors create_opportunity_for_lead()'s
+ * success/skipped/error shape (see move_opportunity_to_named_stage()'s
+ * docblock for why 'skipped' is kept separate from a real failure).
+ *
+ * Skipped (not an error) when: no email on file yet, or this lead already
+ * has a flozy_contact_id on record — never fires twice for the same lead.
+ *
+ * Flozy's Contacts API is POST-only per the docs pulled for this round —
+ * no update/PUT endpoint was found, so there's no "update" path to take
+ * even though the column is named the same way as flozy_opportunity_id.
+ * A 409 means Flozy already has a contact with this email under this
+ * lead (created some other way — directly in Flozy, or a retry that
+ * actually landed before this one got recorded locally); since the docs
+ * don't return the existing Contact's ID on a 409, that case is treated
+ * as skipped rather than an error — there's genuinely nothing more to do,
+ * just no local ID to store.
+ */
+function push_contact_for_lead(PDO $pdo, int $profileId, int $flozyLeadId, string $fullName, ?string $email): array
+{
+    if (!$email) {
+        return ['success' => false, 'skipped' => true, 'error' => null];
+    }
+
+    $stmt = $pdo->prepare("SELECT flozy_contact_id FROM flozy_leads WHERE profile_id = ?");
+    $stmt->execute([$profileId]);
+    if ($stmt->fetchColumn()) {
+        return ['success' => false, 'skipped' => true, 'error' => null];
+    }
+
+    $result = flozy_request('POST', '/leads/' . $flozyLeadId . '/contacts', [
+        'full_name' => $fullName ?: ('@' . $email), // Flozy requires full_name; falls back to something non-empty
+        'email'     => $email,
+    ]);
+
+    if (!$result['success']) {
+        if ($result['http_code'] === 409) {
+            return ['success' => false, 'skipped' => true, 'error' => null];
+        }
+        return ['success' => false, 'skipped' => false, 'error' => $result['error']];
+    }
+
+    $contactId = $result['data']['id'] ?? null;
+    if ($contactId) {
+        $stmt = $pdo->prepare("UPDATE flozy_leads SET flozy_contact_id = ? WHERE profile_id = ?");
+        $stmt->execute([$contactId, $profileId]);
+    }
+
+    return ['success' => true, 'skipped' => false, 'error' => null, 'contact_id' => $contactId];
+}
+
+/**
  * Paginates through EVERY task in the account and returns them all,
  * unfiltered. GET /tasks has no lead_id filter (confirmed against
  * Flozy's real docs), so both api/flozy_lead_tasks.php (filters to one
@@ -277,7 +330,7 @@ function push_profile_to_flozy(PDO $pdo, int $profileId): array
     }
 
     $stmt = $pdo->prepare("
-        SELECT p.username, p.full_name, p.external_url, n.name AS niche,
+        SELECT p.username, p.full_name, p.external_url, p.email, n.name AS niche,
                s.followers_count, s.engagement_rate, s.avg_likes, s.avg_comments, s.posts_per_week
         FROM profiles p
         LEFT JOIN niches n ON n.id = p.niche_id
@@ -385,10 +438,19 @@ function push_profile_to_flozy(PDO $pdo, int $profileId): array
     $oppCreation = create_opportunity_for_lead($pdo, $profileId, $flozyLeadId, $config);
     $opportunityError = $oppCreation['success'] ? null : $oppCreation['error'];
 
+    // Round 35, item #1: auto-fires a Contact push at push time if the
+    // email is already known then. If it isn't known yet (extracted
+    // later, or manually added afterward), "Push Contact" on the Sent to
+    // Flozy tab covers it retroactively — same shape as
+    // "Create Missing Opportunities" for leads pushed before Round 28.
+    $contactPush = push_contact_for_lead($pdo, $profileId, $flozyLeadId, $profile['full_name'] ?: $profile['username'], $profile['email']);
+    $contactError = (!$contactPush['success'] && !$contactPush['skipped']) ? $contactPush['error'] : null;
+
     return [
         'success'          => true,
         'flozy_lead_id'    => $flozyLeadId,
         'task_errors'      => $taskErrors, // lead push still counts as success even if a task or two failed
         'opportunity_error' => $opportunityError, // null if the Opportunity was created fine
+        'contact_error'    => $contactError, // null if contact push succeeded, was skipped, or no email known yet
     ];
 }

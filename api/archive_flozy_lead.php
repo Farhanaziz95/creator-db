@@ -6,12 +6,16 @@
  *
  * What this does NOT do: call DELETE on the Lead/Opportunity in Flozy.
  * The Lead and Opportunity stay fully intact there, just moved to the
- * "Not A Right Fit" stage — this only unlinks the LOCAL flozy_leads row
- * (so the profile stops showing under Sent to Flozy here) and sets the
- * profile's local status to archived, exactly like a normal archive.
- * If you ever push this profile again later, a fresh Lead/Opportunity
- * gets created — the old ones aren't reused, but they're not lost either,
- * they're just sitting at "Not A Right Fit" in your real Flozy pipeline.
+ * "Not A Right Fit" stage.
+ *
+ * Round 35 FIX: this used to also DELETE the local flozy_leads row,
+ * which wiped stage/outreach/opportunity-ID data and contradicted this
+ * project's own "archive over delete, never destroy data" principle —
+ * caught during testing. The row is now kept. api/profiles.php's
+ * Archived view LEFT JOINs flozy_leads so Progress/Pipeline
+ * Stage/Outreach still show for anything that came from Flozy, exactly
+ * as they did before archiving. Only the Opportunity's STAGE changes;
+ * nothing local or remote is deleted by this action.
  */
 require_once __DIR__ . '/../includes/error_handler.php';
 setup_json_error_handling();
@@ -29,7 +33,6 @@ function archive_one_flozy_lead(PDO $pdo, int $profileId, string $notRightFitSta
     // away locally with a known Flozy-side gap than stuck in limbo.
     $stageMoveError = (!$stageMove['success'] && !$stageMove['skipped']) ? $stageMove['error'] : null;
 
-    $pdo->prepare("DELETE FROM flozy_leads WHERE profile_id = ?")->execute([$profileId]);
     $pdo->prepare("UPDATE profiles SET status = 'archived', archived = 1, archived_at = NOW() WHERE id = ?")->execute([$profileId]);
 
     return ['success' => true, 'stage_move_error' => $stageMoveError];

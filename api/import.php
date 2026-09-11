@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/keyword_rules.php';
 require_once __DIR__ . '/../includes/metrics.php';
 require_once __DIR__ . '/../includes/openrouter_client.php'; // for get_or_create_niche()
 require_once __DIR__ . '/../includes/quality_score.php';
+require_once __DIR__ . '/../includes/email_extraction.php';
 
 header('Content-Type: application/json');
 
@@ -99,6 +100,19 @@ foreach ($profiles as $p) {
     // Keep bio/external_url on the profiles table fresh too (latest known values)
     $stmt = $pdo->prepare("UPDATE profiles SET full_name = ?, external_url = ? WHERE id = ?");
     $stmt->execute([$fullName, $externalUrl, $profileId]);
+
+    // Email extraction (Round 35, item #1). Judgment call, since this
+    // wasn't spelled out in chat: unlike full_name/external_url above,
+    // only overwrite profiles.email when THIS bio actually contains a
+    // match — a bio with no email (or a re-import that dropped it) never
+    // blanks out a value that was found before, including one someone
+    // corrected by hand via the editable column. Re-extract only clobbers
+    // a stale email with a genuinely new one found in the fresh bio text.
+    $extractedEmail = extract_email_from_bio($bio);
+    if ($extractedEmail !== null) {
+        $stmt = $pdo->prepare("UPDATE profiles SET email = ? WHERE id = ?");
+        $stmt->execute([$extractedEmail, $profileId]);
+    }
 
     // ---- Niche detection (only if this profile doesn't have one yet) ----
     $stmt = $pdo->prepare("SELECT niche_id FROM profiles WHERE id = ?");

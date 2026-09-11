@@ -31,6 +31,303 @@ This clears the AI queue automatically every few minutes.
    - Add arguments: `C:\xampp\htdocs\creator-db\jobs\process_niche_queue.php`
 4. Save. It'll now run quietly in the background, pulling ~10 profiles per run through the free OpenRouter models (keyword-matched profiles never touch this — only the leftovers with no business category and no keyword match).
 
+## Round 35: Big batch — complete
+
+This round covered a large agreed scope (12 items from one conversation).
+It landed in batches rather than one drop, ending with this zip adding
+item #12 — the last one. All 12 items are now in. Same pattern as this
+project always follows: confirm, build, verify, ship.
+
+### ✅ Landed in this zip (verified, tested, working)
+
+**Email extraction + Flozy Contact push (#1).**
+- `includes/email_extraction.php` — shared regex extractor
+  (`extract_email_from_bio()`), used by both the import path and the
+  backfill so there's one copy of the pattern.
+- `api/import.php` — extracts an email from the bio on every import.
+  **Judgment call, not explicitly settled in chat:** unlike
+  `full_name`/`external_url`, this only overwrites `profiles.email` when
+  the fresh bio actually contains a match — a bio with no email (or a
+  re-import that dropped it) never blanks out a value found before,
+  including one hand-corrected via the editable column. Flag this if you
+  wanted strict always-overwrite instead.
+- `sql/migration_025_email_extraction.sql` — adds `profiles.email`
+  (+ index) and `flozy_leads.flozy_contact_id`. Run this before anything
+  else in this batch.
+- `api/backfill_emails.php` — one-time bulk backfill for profiles
+  imported before this existed. New "Backfill Emails" button in Settings.
+  Never overwrites an email already on file.
+- Email column on the dashboard: visible, filterable (**Has Email / No
+  Email**, next to the Niche filter — applies across all tabs), and
+  editable inline (same pattern as Notes) via `api/update_email.php`.
+- `includes/flozy_client.php` — new `push_contact_for_lead()`
+  (`POST /leads/{leadId}/contacts`), auto-fires at push time in
+  `push_profile_to_flozy()` if the email is already known then. A 409
+  (Flozy already has a contact with this email on that lead) is treated
+  as skipped, not an error — the docs don't return the existing
+  Contact's ID on conflict, so there's nothing more to do.
+- `api/push_flozy_contact.php` — **"Push Contact"** action (single, on
+  the Sent to Flozy row menu; bulk, in the selection bar) for leads
+  pushed before their email was ever known — same shape as "Create
+  Missing Opportunities."
+- `flozy_leads.flozy_contact_id` tracks whether a Contact's been pushed,
+  mirroring `flozy_opportunity_id` — though note Flozy's Contacts API is
+  POST-only per the docs pulled this round, so unlike Opportunities
+  there's no update path if a contact's details change later, only
+  create-once.
+- `config/flozy.php`'s scope comment now lists `write:contacts` (needed
+  for this feature — confirm/add it on your API key) and
+  `write:opportunities`, which the Round 35 handoff notes had already
+  referenced as documented here but the file was actually missing.
+
+**Bulk gameplan upload with pattern matching (#2).**
+- `includes/gameplan_match.php` — shared first-line extraction
+  (`extract_first_nonempty_line()`) and matching
+  (`match_gameplan_first_line()`), used only by the bulk path — the
+  single-file upload doesn't need matching since you already pick the
+  profile by hand there.
+- **Matches against the PDF's extracted text, first line — not the
+  filename** (confirmed). Handles both confirmed real examples:
+  `Monetisation Audit: Full Name (@username)` and `Monetisation Audit:
+  @username`.
+- **The prefix ("Monetisation Audit:") is Settings-stored and editable**
+  (Settings → "Bulk Gameplan Upload — Match Prefix"), not hardcoded —
+  `sql/migration_026_gameplan_bulk_match.sql` adds the single-row
+  `gameplan_match_settings` table (same shape as `brand_voice`), served
+  via `api/gameplan_match_settings.php`. Leaving it blank matches any
+  first line that contains an `@username`, no prefix required.
+- Reuses the same `smalot/pdfparser` library `api/gameplan_upload.php`
+  already uses — no new Composer dependency.
+- **The guardrail — this is the whole point of the feature — is a real
+  two-step flow, not a single endpoint:**
+  - `api/gameplan_bulk_preview.php` parses every selected PDF, matches
+    each first line, and reports filename → matched username → found in
+    DB? — but writes nothing to `gameplans` and touches no Flozy task.
+    Files sit in the new `storage/gameplans/pending/` (own
+    `.htaccess`-denied subfolder) under a random token while the person
+    reviews.
+  - Dashboard: "📄 Bulk Upload Gameplans" (Filters & Archiving panel)
+    opens a preview modal — checkbox to include/exclude each row, a text
+    input to correct a wrong or missing match (backed by the new
+    `api/profile_lookup.php`, searching by username/name across every
+    status, not just the currently open tab), and a per-row warning when
+    attaching would overwrite an existing gameplan.
+  - Only "Attach Selected" calls `api/gameplan_bulk_confirm.php`, which
+    writes ONLY the rows the person left checked with a resolved profile
+    — everything else (unchecked rows, "Cancel", or closing the modal)
+    discards its held pending file instead. A token neither confirmed
+    nor discarded (e.g. the browser closes mid-review) ages out via a
+    24h sweep that runs at the top of the preview endpoint, so
+    `pending/` can't grow forever from abandoned batches.
+- `includes/gameplan_storage.php` — new. The actual `gameplans` table
+  write + "mark the Flozy gameplan task complete" logic, pulled out of
+  `api/gameplan_upload.php` so the single and bulk paths share one copy
+  instead of two that could drift apart. **Confirmed: overwrites an
+  existing gameplan** on a matched profile, same behavior the
+  single-file upload already had — unchanged by this refactor.
+
+**Accordion reorder + Growth Chart tab (#3 & #4).**
+- New tab order in the accordion panel: **Results → Tasks (Flozy view
+  only) → History → Growth Chart.**
+- **Growth Chart is now a tab, not a modal.** The old `#growthModal` /
+  `openGrowthChart()` / standalone 📈 action-menu buttons are gone
+  everywhere (Active, Future, Flozy, Archived) — same
+  `api/profile_history.php` call and same Chart.js line-chart config,
+  just rendering into the accordion's `#accGrowthCanvas` now, lazy-loaded
+  like the other tabs. Fixed canvas ID is safe here since the accordion
+  is single-open — only one row's panel exists at a time.
+- **The accordion toggle button now works on the Archived tab too**
+  (previously nothing there to expand) — gets Results + History + Growth
+  Chart, no Tasks tab (Tasks needs a pushed Flozy lead), for consistency
+  with Archived already showing Progress/Pipeline Stage/Outreach from
+  the Round 35 archive fix above. Archived's action column simplified to
+  just "Restore to Active" now that Growth Chart lives in the accordion.
+
+**Icon-only action bar (#5).**
+- Every remaining row action across **Active, Future, Flozy, and
+  Archived** is now a small icon button with a `title` tooltip on hover —
+  the ⋮ dropdown menu is gone from every row (the "👁 Columns" menu at
+  the top of the table is unrelated and untouched — different menu,
+  different button).
+- **The primary colored action is an icon too now**, not a labeled
+  button — "🚀 Send to Flozy" and "🔍 Verify + Personalize" no longer
+  carry text, per your explicit "don't leave it labeled" call.
+- Built against the *final* action set after the Round 35 accordion
+  changes — Growth Chart/History/Results/Tasks are already gone from
+  the action list (moved into the accordion in items #3&4), so this
+  didn't need to be redone.
+- One shared `actionIconBtn()` JS helper builds every icon button the
+  same way (icon, tooltip, click handler, optional colored style for the
+  primary/danger ones) instead of hand-writing near-identical markup
+  four times.
+- `#6`'s duplicate "Open in Flozy" (action bar AND next to the Pipeline
+  Stage badge) is untouched for now — that's still next up, its own item.
+
+**Gameplan/Verify filters (#8).** Two new dropdowns next to the existing
+Niche/Email filters, on Active, Future, and Flozy (confirmed — not
+Flozy-only, since gameplan upload + verify are already available on
+Active/Future too; hidden on Archived, since that tab is about why
+something got archived, not funnel status).
+- **Gameplan:** Any / Uploaded / Not Uploaded —
+  `EXISTS(SELECT 1 FROM gameplans ...)`, the same check already
+  computing `has_gameplan` for the progress badge, now with a WHERE
+  clause.
+- **Verification**, 3 states now that #7 exists: **Not Verified** (no
+  `post_transcripts` rows) / **Verified Only** (has `post_transcripts`
+  but no `content_analysis_runs` with `status='done'` — exactly what a
+  Verify Only run leaves behind) / **Verified + Personalized** (both
+  exist — today's `has_message` flag).
+- Both are whitelisted literal-SQL-fragment filters, same pattern as
+  the existing outreach/has_email filters — no new bound params needed.
+- Frontend: the two selects sit in a `#gameplanVerifyFilterWrap` span
+  that `switchView()` hides (and resets) on the Archived tab, same
+  show/hide pattern the Flozy-only outreach filter row already uses.
+
+**"Verify Only" (#7).** New action alongside "Verify + Personalize" and
+"Retry AI Only," on Active/Future/Flozy — runs just the Apify scraping
+half, skips both Gemini calls entirely.
+- `includes/verification_scrape.php` — new. The "Stage 1: Reel Scraper" +
+  "Stage 2: Comment Scraper" block moved out of
+  `api/run_verification.php`'s full pipeline into a shared
+  `run_scrape_stage()`, so the new `api/run_verify_only.php` reuses the
+  exact same scraping logic (the incremental `onlyPostsNewerThan` scrape,
+  top-K comment concentration, per-post dedup) instead of a second copy
+  that could drift out of sync. `run_verification.php`'s own behavior is
+  unchanged by this refactor.
+- **Confirmed: respects the existing 21-day cache**, same as normal
+  Verify+Personalize — does NOT force a rescrape just because it's the
+  "only scrape" button.
+- Writes no `content_analysis_runs` row — there's no AI result to store,
+  and #8's upcoming "Verified Only" filter is defined as "has
+  `post_transcripts` but no `content_analysis_runs` with `status='done'`"
+  — staying out of that table entirely is what keeps that condition
+  true, rather than inventing a status value the filter doesn't check for.
+- **Judgment call, not spelled out in chat:** unlike the full pipeline,
+  Verify Only does NOT require a gameplan to already be uploaded, since
+  scraping never touches the gameplan text — only the Gemini prompt
+  does. Means a lead can be pre-scraped before its gameplan even exists,
+  then "Retry AI Only" once it's uploaded. Flag this if you wanted it to
+  match the full pipeline's gameplan-required gate instead.
+- Same purple "scraped" progress dot (`has_scraped_data`) already
+  reflects this — no separate badge needed, `table.ajax.reload()` after
+  a Verify Only run shows it immediately.
+
+**Remove duplicate "Open in Flozy" (#6).** It existed twice on every
+Flozy-tab row — once in the action bar, once next to the Pipeline Stage
+badge. Kept the Pipeline Stage one (it's contextually right next to the
+stage it opens); removed the action-bar icon. `openInFlozy()` itself is
+untouched — still called from the Pipeline Stage badge, just no longer
+duplicated in the action bar too.
+
+**Low/Mid sub-tabs inside Sent to Flozy (#12).**
+- `sql/migration_027_priority_tier.sql` — adds
+  `flozy_leads.priority_tier ENUM('low','mid') NULL`. NULL (untriaged)
+  shows only under "All."
+- New sub-tab row — **All / Low / Mid** — appears only on the Flozy tab,
+  same show/hide pattern (`switchView()`) as the existing outreach filter
+  row. "All" always shows every lead regardless of tier, confirmed.
+- New **Tier** column, Flozy-only: a small `<select>` right on the row
+  (not buried in the accordion, since this is meant to be a frequent
+  lightweight action) — `api/set_priority_tier.php` saves it.
+  **Confirmed: purely local, no Flozy sync at all** — no API call to
+  Flozy anywhere in this feature.
+- `api/profiles.php`: `priority_tier` added to the Flozy `SELECT`, plus a
+  `priority_tier` WHERE filter bound as a real parameter (like
+  `stageFilter`, since 'low'/'mid' are actual column values rather than
+  a fixed set of literal SQL fragments) — applied only inside the Flozy
+  view's branch, so it has no effect on Active/Future/Archived.
+
+**Progress badge refresh bug (#9)** — Gameplan Upload, Verify+Personalize,
+and Retry AI Only now all call `table.ajax.reload(null, false)` on
+success. Previously the 📄🔍💬 dots only updated after a manual page
+refresh.
+
+**Darker row hover (#10)** — `table.dataTable tbody tr:hover td` now gets
+a visibly darker background instead of the barely-there default.
+
+**Archive data-loss fix (#11) — corrects a real mistake from Round 34.**
+"Archive (Not a Right Fit)" used to `DELETE FROM flozy_leads` when
+archiving, which wiped stage/outreach/opportunity-ID data and
+contradicted this project's own "archive over delete, never destroy
+data" principle. Fixed:
+- `api/archive_flozy_lead.php` no longer deletes that row — only the
+  Opportunity's *stage* changes (via the existing
+  `move_opportunity_to_named_stage()`), nothing local or remote gets
+  destroyed.
+- `api/profiles.php`'s Archived view now `LEFT JOIN`s `flozy_leads`
+  instead of excluding anyone who has one, and selects the same
+  Progress/Pipeline Stage/Outreach fields the Flozy view does.
+- Frontend: Progress badges, Pipeline Stage, and Outreach columns now
+  render on the Archived tab too — for leads that were never pushed at
+  all, they show a plain "— (never pushed)" instead of a live Flozy
+  action, since there's genuinely nothing to sync/act on for those.
+- Found and fixed a real bug of my own making while building this:
+  `bind_common()` was still trying to bind a `:statusValue` placeholder
+  for the Archived view even though that query no longer has one — with
+  this project's `PDO::ATTR_EMULATE_PREPARES => false` setting, that
+  would have thrown on every Archived tab load. Caught before shipping.
+
+---
+
+## ⚠️ IN PROGRESS — Round 35, handed off mid-build (context ran out)
+
+This chat hit its practical limit partway through a large agreed batch —
+being continued in a new chat/project. Everything below is the **exact,
+already-confirmed scope** — nothing here needs re-discussing, just
+building. A prior build attempt at item 2 (accordion reorder) got lost to
+a sandbox reset before it could ship, so **only items #9, #10, #11 above
+are actually in this zip** — everything numbered below is still 🚧 not
+started, despite scope being fully locked.
+
+### API facts already confirmed against Flozy's real docs — do not re-verify, just use these
+Pulled directly from `docs.flozy.com/api-reference/...` during this
+project's history. Re-fetch only if something doesn't match reality.
+
+- **Opportunities** (`docs.flozy.com/api-reference/opportunities/*`):
+  `POST /opportunities` create, `GET /opportunities` list (**no
+  `lead_id` filter — must paginate all and filter locally**, confirmed),
+  `PUT /opportunities/{id}` update — **partial update**, Flozy's own docs
+  example sends only `stage_id` + `confidence` together, so other fields
+  don't need resending. Both Create and List return the Opportunity's own
+  ID as `data.id` / `items[].id`.
+- **Tasks** (`docs.flozy.com/api-reference/tasks/*`): `POST /tasks`
+  create, `GET /tasks` list (**no `lead_id` filter either** — same
+  paginate-and-filter approach, confirmed), `PUT /tasks/{id}` update
+  (used to mark tasks complete via `status: 3`). Status codes confirmed:
+  1 todo, 2 in progress, 3 completed, 4 in review.
+  `includes/flozy_client.php`'s `fetch_all_flozy_tasks()` already
+  implements the full-scan pattern — reuse it, don't rebuild it.
+- **Contacts** (`docs.flozy.com/api-reference/contacts/*`) — **fetched
+  this round, not yet used in code.** `POST /leads/{leadId}/contacts`
+  creates a Contact nested under a Lead. Fields: `full_name` (required),
+  `email`, `phone_number`, `whatsapp_number`. Email must be unique per
+  lead (409 if duplicate). Requires the `write:contacts` scope on the
+  Flozy API key — **the person will need to confirm/add this scope**,
+  same as `write:leads`/`write:tasks`/`write:opportunities` already
+  documented in `config/flozy.php`'s header comment.
+- **Pipelines** (`GET /pipelines`): returns `id`, `name`, `tag_name` per
+  stage across all pipelines. Already wrapped in
+  `build_stage_lookup()` in `includes/flozy_client.php`.
+- Confirmed real stage names in this person's actual pipeline (do not
+  guess new ones, ask if something new is needed): **"New Lead"**
+  (default push stage), **"Not A Right Fit"** (used by the archive
+  action), **"Ghosted"** (used by the outreach filter).
+  **"Contacted"** is NOT yet confirmed — `config/flozy.php`'s
+  `default_contacted_stage_name` is deliberately blank; the person needs
+  to fill in their real stage name themselves.
+
+### Round 35 scope — complete
+All 12 items from the original batch have landed (see the ✅ section
+above for each). Nothing left outstanding from this round.
+
+### Practical note for whoever picks this up
+This session hit real sandbox instability (multiple resets mid-edit) on
+top of the context limit — if that happens again, checkpoint and re-verify
+frequently (bracket-balance checks, `diff` the repackaged zip against the
+working directory) rather than trusting a long uninterrupted edit chain.
+This note is now historical — nothing left in this round needs it — but
+worth keeping for whichever future round runs into the same thing.
+
 ## Round 34: Accordion, Overdue panel polish, outreach→Contacted, quick archive
 
 Four changes this round, all from the same conversation.

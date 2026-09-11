@@ -90,6 +90,7 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
     .table-scroll { overflow-x: auto; }
     table.dataTable thead th { color: var(--muted) !important; border-bottom: 1px solid var(--border) !important; }
     table.dataTable tbody td { border-top: 1px solid var(--border) !important; }
+    table.dataTable tbody tr:hover td { background-color: #23283380 !important; }
     a.ext-link { color: var(--accent2); text-decoration: none; }
     .badge { background: #262a33; padding: 2px 8px; border-radius: 20px; font-size: 12px; color: var(--accent); }
     .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
@@ -225,19 +226,6 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
 </div>
 
 <!-- Growth Chart Modal -->
-<div id="growthModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:700px; width:90%;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-            <h2 id="growthModalTitle" style="margin:0; font-size:16px; text-transform:none; letter-spacing:0;">📈 Growth History</h2>
-            <button class="ghost small" onclick="closeGrowthModal()">✕ Close</button>
-        </div>
-        <canvas id="growthChartCanvas" height="120"></canvas>
-        <p id="growthEmptyNote" style="display:none; font-size:12px; color:var(--muted); margin-top:12px;">
-            Only one snapshot on record so far — the chart fills in as this profile gets re-imported over time.
-        </p>
-    </div>
-</div>
-
 <!-- Import History Modal -->
 <div id="importHistoryModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
     <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:800px; width:90%; max-height:80vh; overflow-y:auto;">
@@ -302,6 +290,38 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
 </div>
 
 <input type="file" id="gameplanFileInput" accept="application/pdf" style="display:none;" onchange="handleGameplanFileSelected()">
+<input type="file" id="bulkGameplanFileInput" accept="application/pdf" multiple style="display:none;" onchange="handleBulkGameplanFilesSelected()">
+
+<!-- Bulk Gameplan Upload Preview Modal (Round 35, item #2) -->
+<div id="bulkGameplanModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:900px; width:92%; max-height:85vh; overflow-y:auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <h2 style="margin:0; font-size:16px; text-transform:none; letter-spacing:0;">📄 Bulk Gameplan Upload — Review Before Attaching</h2>
+            <button class="ghost small" onclick="closeBulkGameplanModal()">✕ Close</button>
+        </div>
+        <p style="font-size:12px; color:var(--muted); margin:0 0 14px;">
+            Nothing is attached yet — review each match below, fix anything wrong using the
+            profile picker, uncheck anything you don't want to attach, then confirm.
+        </p>
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+            <thead>
+                <tr style="text-align:left; color:var(--muted); border-bottom:1px solid var(--border);">
+                    <th style="padding:6px;">Attach?</th>
+                    <th style="padding:6px;">File</th>
+                    <th style="padding:6px;">Matched First Line</th>
+                    <th style="padding:6px;">Profile</th>
+                    <th style="padding:6px;">Status</th>
+                </tr>
+            </thead>
+            <tbody id="bulkGameplanPreviewBody"></tbody>
+        </table>
+        <div style="margin-top:16px; display:flex; align-items:center; gap:10px;">
+            <button style="background:#5B7BFF;" onclick="confirmBulkGameplanUpload()">Attach Selected</button>
+            <button class="ghost" onclick="closeBulkGameplanModal()">Cancel — discard all</button>
+            <span id="bulkGameplanStatus" style="font-size:12px; color:var(--muted);"></span>
+        </div>
+    </div>
+</div>
 
 <!-- Verification Results Modal -->
 <!-- Follow-up Modal (guided — you choose the type, system prompts for input) -->
@@ -410,6 +430,27 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
         <input type="number" id="maxEngagement" placeholder="no limit" min="0" step="0.1" style="width:90px">
         <label>Niche</label>
         <select id="nicheFilter" style="width:160px;"><option value="">All niches</option></select>
+        <label>Email</label>
+        <select id="hasEmailFilter" style="width:130px;" onchange="reloadTable()">
+            <option value="">Any</option>
+            <option value="yes">Has Email</option>
+            <option value="no">No Email</option>
+        </select>
+        <span id="gameplanVerifyFilterWrap">
+            <label>Gameplan</label>
+            <select id="gameplanFilterSelect" style="width:130px;" onchange="reloadTable()">
+                <option value="">Any</option>
+                <option value="uploaded">Uploaded</option>
+                <option value="not_uploaded">Not Uploaded</option>
+            </select>
+            <label>Verification</label>
+            <select id="verifyFilterSelect" style="width:170px;" onchange="reloadTable()">
+                <option value="">Any</option>
+                <option value="not_verified">Not Verified</option>
+                <option value="verified_only">Verified Only</option>
+                <option value="verified_personalized">Verified + Personalized</option>
+            </select>
+        </span>
         <button onclick="reloadTable()">Apply Filter</button>
     </div>
     <div class="controls" style="margin-top:12px;">
@@ -418,6 +459,7 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
         <button style="background:#5B7BFF;" onclick="pushQualifiedToFlozy()">Push Qualified to Flozy</button>
         <button class="ghost" onclick="syncAllFlozyStages()">🔄 Sync All Pipeline Stages</button>
         <button class="ghost" onclick="createMissingOpportunities()">🩹 Create Missing Opportunities</button>
+        <button class="ghost" onclick="triggerBulkGameplanUpload()">📄 Bulk Upload Gameplans</button>
         <button class="ghost" onclick="openImportHistory()">📜 Import History</button>
     </div>
     <div id="archiveStatus"></div>
@@ -527,6 +569,11 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
         <a href="content_studio.php" style="align-self:center; color:var(--muted); font-size:13px;">🎬 Content Studio</a>
         <a href="settings.php" style="align-self:center; color:var(--muted); font-size:13px;">⚙️ Settings (Default Task List)</a>
     </div>
+    <div class="tabs" id="tierSubTabWrap" style="display:none; margin-top:-8px; margin-bottom:16px;">
+        <button class="tab-btn active" id="tierTabAll" style="padding:5px 12px; font-size:12px;" onclick="switchTierTab('')">All</button>
+        <button class="tab-btn" id="tierTabLow" style="padding:5px 12px; font-size:12px;" onclick="switchTierTab('low')">Low</button>
+        <button class="tab-btn" id="tierTabMid" style="padding:5px 12px; font-size:12px;" onclick="switchTierTab('mid')">Mid</button>
+    </div>
     <div id="bulkActionBar" style="display:none; background:#1c2029; border:1px solid var(--accent2); border-radius:8px; padding:10px 14px; margin-bottom:12px; align-items:center; gap:10px; flex-wrap:wrap;">
         <span id="bulkSelectionCount" style="font-size:13px; font-weight:600;"></span>
         <div id="bulkActionButtons" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
@@ -551,9 +598,11 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
                 <th>Link</th>
                 <th>Last Updated</th>
                 <th>Notes</th>
+                <th>Email</th>
                 <th>Progress</th>
                 <th>Pipeline Stage</th>
                 <th>Outreach</th>
+                <th>Tier</th>
                 <th>Actions</th>
             </tr>
         </thead>
@@ -696,6 +745,7 @@ function updateBulkActionBar() {
         viewButtons = `<button class="small ghost" onclick="bulkRestoreSelected()">Restore to Active</button>`;
     } else if (currentView === 'flozy') {
         viewButtons = `
+            <button class="small" style="background:#5B7BFF;" onclick="bulkPushContactSelected()">📧 Push Contact</button>
             <button class="small danger" onclick="bulkArchiveFlozySelected()">🗄️ Archive (Not a Right Fit)</button>
             <button class="small danger" onclick="bulkRemoveFromFlozySelected()">Remove from Flozy</button>`;
     }
@@ -801,8 +851,29 @@ async function bulkArchiveFlozySelected() {
         .catch(err => { hideLoadingToast(); notifyError('Bulk archive failed.', err); });
 }
 
+async function bulkPushContactSelected() {
+    const ids = [...selectedIds];
+    const ok = await confirmAction('Push Contact for selected?', `Creates a Flozy Contact (name + email) for each of the ${ids.length} selected lead(s) that has an email on file and hasn't had one pushed yet. Leads with no email, or that already have a Contact pushed, are skipped — not an error.`, 'Push them');
+    if (!ok) return;
+    showLoadingToast('Pushing contacts for selected…');
+    fetch('../api/push_flozy_contact.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'selected', profile_ids: ids })
+    })
+        .then(r => r.json())
+        .then(res => {
+            hideLoadingToast();
+            if (!res.success) { notifyError('Bulk Push Contact failed.', res.error); return; }
+            notifyInfo(`Pushed ${res.pushed} contact(s), skipped ${res.skipped} (no email or already pushed), out of ${res.total_attempted}.`);
+            if (res.failed.length) notifyWarning(`${res.failed.length} contact push(es) failed — details in console.`, res.failed);
+            clearSelection(); table.ajax.reload(null, false);
+        })
+        .catch(err => { hideLoadingToast(); notifyError('Bulk Push Contact failed.', err); });
+}
+
 let table;
 let currentView = 'active';
+let currentTierTab = ''; // '' | 'low' | 'mid' — Round 35, item #12; only meaningful on the Flozy view
 
 // Built server-side from config/flozy.php so this stays in sync with the
 // backend's config instead of being a second hardcoded copy.
@@ -972,6 +1043,18 @@ function quickCompleteOverdueTask(taskId) {
         .catch(err => notifyError('Could not mark task complete.', err));
 }
 
+/**
+ * Round 35, item #5: icon-only action bar — every remaining row action
+ * (across Active/Future/Flozy/Archived) is a small icon button with a
+ * title tooltip, no dropdown menu. One helper so all four views build
+ * their icon buttons the same way instead of hand-writing markup four
+ * times. `style` is for the rare colored one (the "primary" action,
+ * e.g. Send to Flozy) — plain neutral buttons pass ''.
+ */
+function actionIconBtn(icon, title, onclickJs, style) {
+    return `<button class="small ghost" style="${style || ''}" title="${title}" onclick="${onclickJs}">${icon}</button>`;
+}
+
 function initTable() {
     table = $('#profilesTable').DataTable({
         serverSide: true,
@@ -987,6 +1070,10 @@ function initTable() {
                 d.min_engagement = document.getElementById('minEngagement').value || 0;
                 d.max_engagement = document.getElementById('maxEngagement').value || '';
                 d.niche_id = document.getElementById('nicheFilter').value || '';
+                d.has_email = document.getElementById('hasEmailFilter').value || '';
+                d.gameplan_filter = document.getElementById('gameplanFilterSelect').value || '';
+                d.verify_filter = document.getElementById('verifyFilterSelect').value || '';
+                d.priority_tier = currentTierTab;
                 d.outreach_status = document.getElementById('outreachFilterSelect').value || '';
                 d.stage_filter = document.getElementById('stageFilterSelect').value || '';
                 d.outreach_days = document.getElementById('outreachDaysSelect').value || '';
@@ -1008,11 +1095,14 @@ function initTable() {
                 className: 'accordion-toggle-cell',
                 render: function (row) {
                     // Tasks/History/Results moved from modals to this
-                    // expandable row (Round 34) — Active/Future only get
-                    // History+Results tabs (no Tasks, since that needs a
-                    // pushed Flozy lead); Archived gets nothing to expand.
-                    if (currentView === 'archived') return '';
-                    return `<button class="accordion-toggle-btn" onclick="toggleAccordionRow(this, ${row.id}, '${row.username}')" title="Show Tasks/History/Results">▶</button>`;
+                    // expandable row (Round 34); Growth Chart joined them
+                    // as a tab (Round 35, item #3&4), replacing its own
+                    // standalone modal/buttons. Flozy gets all four tabs;
+                    // Active/Future/Archived get Results+History+Growth
+                    // (no Tasks, since that needs a pushed Flozy lead) —
+                    // Archived now expands too, for consistency with it
+                    // already showing Progress/Pipeline Stage/Outreach.
+                    return `<button class="accordion-toggle-btn" onclick="toggleAccordionRow(this, ${row.id}, '${row.username}')" title="Show ${currentView === 'flozy' ? 'Tasks/History/Results/Growth' : 'History/Results/Growth'}">▶</button>`;
                 }
             },
             { data: 'username', render: u => `<a class="ext-link" href="https://instagram.com/${u}" target="_blank">@${u}</a>` },
@@ -1058,10 +1148,20 @@ function initTable() {
                 }
             },
             {
+                // Round 35, item #1: regex-extracted from the bio on every
+                // import, editable here for the cases the regex misses or
+                // picks up a wrong address (same pattern as Notes above).
+                data: 'email',
+                render: function (val, type, row) {
+                    const safe = (val || '').replace(/"/g, '&quot;');
+                    return `<input type="email" value="${safe}" placeholder="no email found" style="width:170px; background:#0f1115; border:1px solid var(--border); color:var(--text); padding:4px 6px; border-radius:4px; font-size:12px;" onchange="saveEmail(${row.id}, this.value)">`;
+                }
+            },
+            {
                 data: null,
                 orderable: false,
                 render: function (row) {
-                    if (currentView !== 'flozy' && currentView !== 'active' && currentView !== 'future') return '';
+                    if (!['flozy', 'active', 'future', 'archived'].includes(currentView)) return '';
                     const dot = (done, color) => `<span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:${done ? color : '#333844'}; margin-right:3px; vertical-align:middle;"></span>`;
                     const g = dot(row.has_gameplan, '#60a5fa');   // blue = gameplan
                     const s = dot(row.has_scraped_data, '#a78bfa'); // purple = scraped
@@ -1076,7 +1176,15 @@ function initTable() {
                 data: null,
                 orderable: false,
                 render: function (row) {
-                    if (currentView !== 'flozy') return '';
+                    // Round 35: also shown on Archived now (archiving no
+                    // longer deletes flozy_leads, so this data survives) —
+                    // guarded on flozy_lead_id rather than view, since an
+                    // archived-but-never-pushed profile has no Flozy data
+                    // to show or act on at all.
+                    if (currentView !== 'flozy' && currentView !== 'archived') return '';
+                    if (!row.flozy_lead_id) {
+                        return '<span style="color:#666; font-size:12px; white-space:nowrap;">— (never pushed)</span>';
+                    }
                     const openBtn = ` <button class="small ghost" onclick="openInFlozy(${row.flozy_lead_id})" title="Open this lead directly in Flozy">🔗</button>`;
                     if (!row.current_stage) {
                         return '<span style="color:#666; font-size:12px; white-space:nowrap;">not synced</span> <button class="small ghost" onclick="syncFlozyStage(' + row.id + ')" title="Pull latest stage from Flozy">🔄</button>' + openBtn;
@@ -1090,7 +1198,10 @@ function initTable() {
                 data: null,
                 orderable: false,
                 render: function (row) {
-                    if (currentView !== 'flozy') return '';
+                    if (currentView !== 'flozy' && currentView !== 'archived') return '';
+                    if (!row.flozy_lead_id) {
+                        return '<span style="color:#666; font-size:12px; white-space:nowrap;">— (never pushed)</span>';
+                    }
                     if (row.outreached_at) {
                         return `<span class="badge" style="background:rgba(34,197,94,0.22); white-space:nowrap;" title="Outreached at ${row.outreached_at}">✅ Contacted</span> <button class="small ghost" onclick="toggleOutreach(${row.id}, false)" title="Undo — marks as not yet contacted again">↩️</button>`;
                     }
@@ -1098,58 +1209,63 @@ function initTable() {
                 }
             },
             {
+                // Round 35, item #12: purely local Low/Mid triage, no
+                // Flozy sync — a small dropdown right on the row, not
+                // buried in the accordion, since this is meant to be a
+                // frequent lightweight action.
+                data: null,
+                orderable: false,
+                render: function (row) {
+                    if (currentView !== 'flozy') return '';
+                    const tier = row.priority_tier || '';
+                    return `<select onchange="setPriorityTier(${row.id}, this.value)" style="background:#0f1115; border:1px solid var(--border); color:var(--text); padding:3px 6px; border-radius:4px; font-size:12px;">
+                        <option value="" ${tier === '' ? 'selected' : ''}>—</option>
+                        <option value="low" ${tier === 'low' ? 'selected' : ''}>Low</option>
+                        <option value="mid" ${tier === 'mid' ? 'selected' : ''}>Mid</option>
+                    </select>`;
+                }
+            },
+            {
                 data: null,
                 orderable: false,
                 render: function (row) {
                     if (currentView === 'active') {
-                        return `
-                            <div class="action-menu">
-                                <button class="small" style="background:#5B7BFF;" onclick="pushOneToFlozy(${row.id})">Send to Flozy</button>
-                                <button class="action-menu-btn" onclick="toggleActionMenu(${row.id})">⋮</button>
-                                <div class="action-menu-content" id="menu-${row.id}">
-                                    <button onclick="openGrowthChart(${row.id}, '${row.username}')">📈 Growth Chart</button>
-                                    <button onclick="triggerGameplanUpload(${row.id})">📄 Upload Gameplan</button>
-                                    <button onclick="runVerification(${row.id})">🔍 Verify + Personalize</button>
-                                    <button onclick="rerunAiOnly(${row.id})">🔁 Retry AI Only</button>
-                                    <button onclick="sendToFuture(${row.id})">⏭️ Send to Future</button>
-                                    <button onclick="archiveOne(${row.id})" style="color:var(--danger);">🗄️ Archive</button>
-                                </div>
-                            </div>`;
+                        return [
+                            actionIconBtn('🚀', 'Send to Flozy', `pushOneToFlozy(${row.id})`, 'background:#5B7BFF;'),
+                            actionIconBtn('📄', 'Upload Gameplan', `triggerGameplanUpload(${row.id})`),
+                            actionIconBtn('🔍', 'Verify + Personalize', `runVerification(${row.id})`),
+                            actionIconBtn('🔎', 'Verify Only (scrape, no AI)', `runVerifyOnly(${row.id})`),
+                            actionIconBtn('🔁', 'Retry AI Only', `rerunAiOnly(${row.id})`),
+                            actionIconBtn('⏭️', 'Send to Future', `sendToFuture(${row.id})`),
+                            actionIconBtn('🗄️', 'Archive', `archiveOne(${row.id})`, 'background:var(--danger);'),
+                        ].join(' ');
                     }
                     if (currentView === 'future') {
-                        return `
-                            <div class="action-menu">
-                                <button class="small ghost" onclick="restoreOne(${row.id})">Restore to Active</button>
-                                <button class="action-menu-btn" onclick="toggleActionMenu(${row.id})">⋮</button>
-                                <div class="action-menu-content" id="menu-${row.id}">
-                                    <button onclick="openGrowthChart(${row.id}, '${row.username}')">📈 Growth Chart</button>
-                                    <button onclick="triggerGameplanUpload(${row.id})">📄 Upload Gameplan</button>
-                                    <button onclick="runVerification(${row.id})">🔍 Verify + Personalize</button>
-                                    <button onclick="rerunAiOnly(${row.id})">🔁 Retry AI Only</button>
-                                    <button onclick="pushOneToFlozy(${row.id})">🚀 Send to Flozy</button>
-                                    <button onclick="archiveOne(${row.id})" style="color:var(--danger);">🗄️ Archive</button>
-                                </div>
-                            </div>`;
+                        return [
+                            actionIconBtn('🔙', 'Restore to Active', `restoreOne(${row.id})`),
+                            actionIconBtn('📄', 'Upload Gameplan', `triggerGameplanUpload(${row.id})`),
+                            actionIconBtn('🔍', 'Verify + Personalize', `runVerification(${row.id})`),
+                            actionIconBtn('🔎', 'Verify Only (scrape, no AI)', `runVerifyOnly(${row.id})`),
+                            actionIconBtn('🔁', 'Retry AI Only', `rerunAiOnly(${row.id})`),
+                            actionIconBtn('🚀', 'Send to Flozy', `pushOneToFlozy(${row.id})`, 'background:#5B7BFF;'),
+                            actionIconBtn('🗄️', 'Archive', `archiveOne(${row.id})`, 'background:var(--danger);'),
+                        ].join(' ');
                     }
                     if (currentView === 'archived') {
-                        return `<button class="small ghost" onclick="openGrowthChart(${row.id}, '${row.username}')">📈</button> <button class="small ghost" onclick="restoreOne(${row.id})">Restore to Active</button>`;
+                        return actionIconBtn('🔙', 'Restore to Active', `restoreOne(${row.id})`);
                     }
                     // flozy view
-                    return `
-                        <div class="action-menu">
-                            <button class="small" style="background:#5B7BFF;" onclick="runVerification(${row.id})">🔍 Verify+Personalize</button>
-                            <button class="action-menu-btn" onclick="toggleActionMenu(${row.id})">⋮</button>
-                            <div class="action-menu-content" id="menu-${row.id}">
-                                <button onclick="openInFlozy(${row.flozy_lead_id})">🔗 Open in Flozy</button>
-                                <button onclick="openMoveStageModal(${row.id}, '${row.username}')">🔀 Move Stage</button>
-                                <button onclick="openGrowthChart(${row.id}, '${row.username}')">📈 Growth Chart</button>
-                                <button onclick="triggerGameplanUpload(${row.id})">📄 Upload Gameplan</button>
-                                <button onclick="rerunAiOnly(${row.id})">🔁 Retry AI Only</button>
-                                <button onclick="openFollowupModal(${row.id})">💬 Follow-up</button>
-                                <button onclick="archiveFlozyLead(${row.id}, '${row.username}')" style="color:var(--danger);">🗄️ Archive (Not a Right Fit)</button>
-                                <button onclick="removeFromFlozy(${row.id})" style="color:var(--danger);">❌ Remove from Flozy</button>
-                            </div>
-                        </div>`;
+                    return [
+                        actionIconBtn('🔍', 'Verify + Personalize', `runVerification(${row.id})`, 'background:#5B7BFF;'),
+                        actionIconBtn('🔎', 'Verify Only (scrape, no AI)', `runVerifyOnly(${row.id})`),
+                        actionIconBtn('🔀', 'Move Stage', `openMoveStageModal(${row.id}, '${row.username}')`),
+                        actionIconBtn('📄', 'Upload Gameplan', `triggerGameplanUpload(${row.id})`),
+                        actionIconBtn('🔁', 'Retry AI Only', `rerunAiOnly(${row.id})`),
+                        actionIconBtn('💬', 'Follow-up', `openFollowupModal(${row.id})`),
+                        !row.flozy_contact_id ? actionIconBtn('📧', 'Push Contact', `pushContactOne(${row.id})`) : '',
+                        actionIconBtn('🗄️', 'Archive (Not a Right Fit)', `archiveFlozyLead(${row.id}, '${row.username}')`, 'background:var(--danger);'),
+                        actionIconBtn('❌', 'Remove from Flozy', `removeFromFlozy(${row.id})`, 'background:var(--danger);'),
+                    ].join(' ');
                 }
             },
         ],
@@ -1199,6 +1315,22 @@ function switchView(view) {
     document.getElementById('tabFuture').classList.toggle('active', view === 'future');
     document.getElementById('tabFlozy').classList.toggle('active', view === 'flozy');
     document.getElementById('outreachFilterWrap').style.display = (view === 'flozy') ? 'inline-block' : 'none';
+    // Round 35, item #12 — Low/Mid sub-tabs, same show/hide pattern as the
+    // outreach filter row above: only meaningful (and only shown) on Flozy.
+    document.getElementById('tierSubTabWrap').style.display = (view === 'flozy') ? 'flex' : 'none';
+    if (view !== 'flozy') {
+        currentTierTab = '';
+        document.querySelectorAll('#tierSubTabWrap .tab-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById('tierTabAll').classList.add('active');
+    }
+    // Gameplan/Verify filters (Round 35, item #8) — confirmed to apply on
+    // Active/Future/Flozy but NOT Archived (that tab is for reviewing why
+    // something got archived, not funnel status).
+    document.getElementById('gameplanVerifyFilterWrap').style.display = (view === 'archived') ? 'none' : 'inline';
+    if (view === 'archived') {
+        document.getElementById('gameplanFilterSelect').value = '';
+        document.getElementById('verifyFilterSelect').value = '';
+    }
     if (view === 'flozy') {
         loadFlozyStageFilterOptions();
     } else {
@@ -1222,6 +1354,20 @@ function switchView(view) {
  * switches to the Flozy tab and searches for the username — the row
  * lands on page 1, and the person expands it themselves from there.
  */
+/**
+ * Round 35, item #12: Low/Mid sub-tabs inside Sent to Flozy. "All" always
+ * shows every lead regardless of tier (confirmed) — it's a sub-tab of the
+ * Flozy view, not a separate view, so this just updates the filter and
+ * reloads rather than touching currentView/switchView at all.
+ */
+function switchTierTab(tier) {
+    currentTierTab = tier;
+    document.querySelectorAll('#tierSubTabWrap .tab-btn').forEach(b => b.classList.remove('active'));
+    const btnId = tier === 'low' ? 'tierTabLow' : (tier === 'mid' ? 'tierTabMid' : 'tierTabAll');
+    document.getElementById(btnId).classList.add('active');
+    table.ajax.reload(null, false);
+}
+
 function jumpToFlozyLead(username) {
     switchView('flozy');
     setTimeout(() => {
@@ -1259,6 +1405,25 @@ function toggleOutreach(profileId, outreached) {
             table.ajax.reload(null, false);
         })
         .catch(err => notifyError('Could not update outreach status.', err));
+}
+
+/**
+ * Round 35, item #12: purely local, no Flozy sync. Reloads afterward
+ * since changing a lead's tier while viewing the Low or Mid sub-tab
+ * should make it appear/disappear from the current filter immediately,
+ * same as toggleOutreach() above does for the outreach filter.
+ */
+function setPriorityTier(profileId, tier) {
+    fetch('../api/set_priority_tier.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile_id: profileId, tier: tier })
+    })
+        .then(r => r.json())
+        .then(res => {
+            if (!res.success) { notifyError('Could not set tier.', res.error); return; }
+            table.ajax.reload(null, false);
+        })
+        .catch(err => notifyError('Could not set tier.', err));
 }
 
 function syncAllFlozyStages() {
@@ -1316,7 +1481,8 @@ function pushOneToFlozy(profileId) {
             }
             const taskNote = res.task_errors && res.task_errors.length ? ` (${res.task_errors.length} task(s) failed, lead itself is fine)` : '';
             const oppNote = res.opportunity_error ? ` ⚠️ Opportunity not created: ${res.opportunity_error}` : ' Opportunity created too.';
-            status.textContent = `Pushed to Flozy.${taskNote}${oppNote}`;
+            const contactNote = res.contact_error ? ` ⚠️ Contact not created: ${res.contact_error}` : '';
+            status.textContent = `Pushed to Flozy.${taskNote}${oppNote}${contactNote}`;
             loadStats();
             table.ajax.reload(null, false);
         })
@@ -1394,6 +1560,27 @@ async function archiveFlozyLead(profileId, username) {
         .catch(err => notifyError('Archive failed.', err));
 }
 
+function pushContactOne(profileId) {
+    fetch('../api/push_flozy_contact.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'one', profile_id: profileId })
+    })
+        .then(r => r.json())
+        .then(res => {
+            if (res.success) {
+                notifyInfo('Contact pushed to Flozy.');
+                table.ajax.reload(null, false);
+                return;
+            }
+            if (res.skipped) {
+                notifyWarning(res.error || 'Nothing to push — no email on file, or already pushed.');
+                return;
+            }
+            notifyError('Push Contact failed.', res.error);
+        })
+        .catch(err => notifyError('Push Contact failed.', err));
+}
+
 function reloadTable() {
     saveFilters();
     table.ajax.reload(null, false);
@@ -1463,6 +1650,14 @@ function saveNote(profileId, notes) {
     });
 }
 
+function saveEmail(profileId, email) {
+    fetch('../api/update_email.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile_id: profileId, email: email })
+    });
+}
+
 function loadNicheOptions() {
     fetch('../api/niches.php')
         .then(r => r.json())
@@ -1478,49 +1673,6 @@ function loadNicheOptions() {
             });
             select.value = current;
         });
-}
-
-let growthChartInstance = null;
-function openGrowthChart(profileId, username) {
-    document.getElementById('growthModal').style.display = 'flex';
-    document.getElementById('growthModalTitle').textContent = `📈 Growth History — @${username}`;
-    document.getElementById('growthEmptyNote').style.display = 'none';
-
-    fetch(`../api/profile_history.php?profile_id=${profileId}`)
-        .then(r => r.json())
-        .then(res => {
-            const history = res.history || [];
-            const ctx = document.getElementById('growthChartCanvas').getContext('2d');
-            if (growthChartInstance) growthChartInstance.destroy();
-
-            if (history.length < 2) {
-                document.getElementById('growthEmptyNote').style.display = 'block';
-            }
-
-            growthChartInstance = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: history.map(h => h.imported_at.split(' ')[0]),
-                    datasets: [
-                        { label: 'Followers', data: history.map(h => h.followers_count), borderColor: '#60a5fa', yAxisID: 'y', tension: 0.2 },
-                        { label: 'Engagement %', data: history.map(h => h.engagement_rate), borderColor: '#6ee7b7', yAxisID: 'y1', tension: 0.2 },
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    interaction: { mode: 'index', intersect: false },
-                    scales: {
-                        y: { type: 'linear', position: 'left', ticks: { color: '#8b8f9a' } },
-                        y1: { type: 'linear', position: 'right', ticks: { color: '#8b8f9a' }, grid: { drawOnChartArea: false } },
-                        x: { ticks: { color: '#8b8f9a' } },
-                    },
-                    plugins: { legend: { labels: { color: '#e8e9ec' } } },
-                }
-            });
-        });
-}
-function closeGrowthModal() {
-    document.getElementById('growthModal').style.display = 'none';
 }
 
 function openImportHistory() {
@@ -1742,12 +1894,21 @@ let accordionLoadedTabs = {};
 function buildAccordionPanelHtml(profileId, username) {
     const showTasksTab = (currentView === 'flozy');
     const defaultTab = showTasksTab ? 'tasks' : 'history';
+    // Round 35, item #3&4: reordered Results → Tasks (Flozy only) →
+    // History → Growth Chart. Growth Chart is new here — it used to be
+    // its own modal (openGrowthChart/#growthModal), now it's a lazy-
+    // loaded tab like the others, on a fixed #accGrowthCanvas id since
+    // only one accordion row is ever open at a time.
     return `
         <div class="accordion-panel">
             <div class="accordion-tabs">
+                <button class="accordion-tab-btn ${defaultTab === 'results' ? 'active' : ''}" data-tab="results" onclick="switchAccordionTab('results', this)">📋 Results</button>
                 ${showTasksTab ? `<button class="accordion-tab-btn ${defaultTab === 'tasks' ? 'active' : ''}" data-tab="tasks" onclick="switchAccordionTab('tasks', this)">🔔 Tasks & Reminders</button>` : ''}
                 <button class="accordion-tab-btn ${defaultTab === 'history' ? 'active' : ''}" data-tab="history" onclick="switchAccordionTab('history', this)">🕐 History</button>
-                <button class="accordion-tab-btn" data-tab="results" onclick="switchAccordionTab('results', this)">📋 Results</button>
+                <button class="accordion-tab-btn ${defaultTab === 'growth' ? 'active' : ''}" data-tab="growth" onclick="switchAccordionTab('growth', this)">📈 Growth Chart</button>
+            </div>
+            <div id="accTabResults" class="accordion-tab-content" style="${defaultTab === 'results' ? '' : 'display:none;'}">
+                <div id="accResultsContent"><p style="color:var(--muted); font-size:13px;">Loading…</p></div>
             </div>
             <div id="accTabTasks" class="accordion-tab-content" style="${defaultTab === 'tasks' ? '' : 'display:none;'}">
                 <div id="accTasksList"><p style="color:var(--muted); font-size:13px;">Loading…</p></div>
@@ -1770,8 +1931,11 @@ function buildAccordionPanelHtml(profileId, username) {
                 <div id="accHistoryFreshness" style="font-size:13px; padding:10px 12px; border-radius:6px; margin-bottom:14px;"></div>
                 <div id="accHistoryTimeline"></div>
             </div>
-            <div id="accTabResults" class="accordion-tab-content" style="display:none;">
-                <div id="accResultsContent"><p style="color:var(--muted); font-size:13px;">Loading…</p></div>
+            <div id="accTabGrowth" class="accordion-tab-content" style="${defaultTab === 'growth' ? '' : 'display:none;'}">
+                <canvas id="accGrowthCanvas" height="100"></canvas>
+                <p id="accGrowthEmptyNote" style="display:none; font-size:12px; color:var(--muted); margin-top:12px;">
+                    Only one snapshot on record so far — the chart fills in as this profile gets re-imported over time.
+                </p>
             </div>
         </div>
     `;
@@ -1817,7 +1981,7 @@ function closeAccordionRow() {
 function switchAccordionTab(tab, btnEl) {
     document.querySelectorAll('.accordion-tab-btn').forEach(b => b.classList.remove('active'));
     if (btnEl) btnEl.classList.add('active');
-    ['tasks', 'history', 'results'].forEach(t => {
+    ['results', 'tasks', 'history', 'growth'].forEach(t => {
         const el = document.getElementById('accTab' + t.charAt(0).toUpperCase() + t.slice(1));
         if (el) el.style.display = (t === tab) ? 'block' : 'none';
     });
@@ -1830,6 +1994,7 @@ function loadAccordionTabContent(tab) {
     if (tab === 'tasks') loadAccordionTasks();
     else if (tab === 'history') loadAccordionHistory();
     else if (tab === 'results') loadAccordionResults();
+    else if (tab === 'growth') loadAccordionGrowth();
 }
 
 function loadAccordionTasks() {
@@ -2080,9 +2245,11 @@ const toggleableColumns = [
     { idx: 12, label: 'Link' },
     { idx: 13, label: 'Last Updated' },
     { idx: 14, label: 'Notes' },
-    { idx: 15, label: 'Progress' },
-    { idx: 16, label: 'Pipeline Stage' },
-    { idx: 17, label: 'Outreach' },
+    { idx: 15, label: 'Email' },
+    { idx: 16, label: 'Progress' },
+    { idx: 17, label: 'Pipeline Stage' },
+    { idx: 18, label: 'Outreach' },
+    { idx: 19, label: 'Tier' },
 ];
 
 function buildColumnToggleMenu() {
@@ -2094,12 +2261,6 @@ function buildColumnToggleMenu() {
     `).join('');
 }
 
-function toggleActionMenu(id) {
-    document.querySelectorAll('.action-menu-content').forEach(el => {
-        if (el.id !== 'menu-' + id) el.classList.remove('open');
-    });
-    document.getElementById('menu-' + id).classList.toggle('open');
-}
 function toggleColumnMenu() {
     document.querySelectorAll('.action-menu-content').forEach(el => {
         if (el.id !== 'columnToggleMenu') el.classList.remove('open');
@@ -2138,10 +2299,147 @@ function handleGameplanFileSelected() {
             } else {
                 notifyWarning('Gameplan uploaded, but text extraction failed — PDF saved anyway. Verification won\'t work until this is fixed.', res);
             }
+            table.ajax.reload(null, false); // bug fix: progress badge wasn't updating without a manual page refresh
         })
         .catch(err => { hideLoadingToast(); notifyError('Gameplan upload failed.', err); });
 
     fileInput.value = '';
+}
+
+let bulkGameplanRows = [];
+
+function triggerBulkGameplanUpload() {
+    document.getElementById('bulkGameplanFileInput').click();
+}
+
+function handleBulkGameplanFilesSelected() {
+    const fileInput = document.getElementById('bulkGameplanFileInput');
+    const files = fileInput.files;
+    if (!files || !files.length) return;
+
+    const fd = new FormData();
+    for (const f of files) fd.append('gameplans[]', f);
+
+    showLoadingToast('Parsing and matching gameplans…');
+    fetch('../api/gameplan_bulk_preview.php', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(res => {
+            hideLoadingToast();
+            if (!res.success) { notifyError('Bulk gameplan preview failed.', res.error); return; }
+            bulkGameplanRows = res.rows.map(r => ({
+                ...r,
+                include: !!r.found && !r.error,
+                displayUsername: r.matched_username || '',
+            }));
+            renderBulkGameplanTable();
+            document.getElementById('bulkGameplanStatus').textContent = '';
+            document.getElementById('bulkGameplanModal').style.display = 'flex';
+        })
+        .catch(err => { hideLoadingToast(); notifyError('Bulk gameplan preview failed.', err); });
+
+    fileInput.value = '';
+}
+
+function renderBulkGameplanTable() {
+    const body = document.getElementById('bulkGameplanPreviewBody');
+    body.innerHTML = bulkGameplanRows.map((row, i) => {
+        if (row.error) {
+            return `<tr>
+                <td style="padding:6px;"><input type="checkbox" disabled></td>
+                <td style="padding:6px;">${row.filename}</td>
+                <td style="padding:6px; color:var(--danger);" colspan="3">${row.error}</td>
+            </tr>`;
+        }
+        const statusHtml = row.profile_id
+            ? (row.has_existing_gameplan
+                ? `<span style="color:#facc15;">⚠️ Will overwrite existing gameplan</span>`
+                : `<span style="color:var(--accent);">✅ Match found</span>`)
+            : `<span style="color:var(--danger);">❌ Not found in DB</span>`;
+        return `<tr>
+            <td style="padding:6px;"><input type="checkbox" ${row.include ? 'checked' : ''} ${row.profile_id ? '' : 'disabled'} onchange="bulkGameplanRows[${i}].include = this.checked"></td>
+            <td style="padding:6px;">${row.filename}</td>
+            <td style="padding:6px; color:var(--muted);">${row.first_line || '(no line extracted)'}</td>
+            <td style="padding:6px;">
+                <input type="text" value="${row.displayUsername}" placeholder="username" style="width:110px; background:#0f1115; border:1px solid var(--border); color:var(--text); padding:4px 6px; border-radius:4px; font-size:12px;" onchange="lookupBulkGameplanProfile(${i}, this.value)">
+            </td>
+            <td style="padding:6px;">${statusHtml}</td>
+        </tr>`;
+    }).join('');
+}
+
+function lookupBulkGameplanProfile(i, username) {
+    bulkGameplanRows[i].displayUsername = username;
+    username = username.trim();
+    if (!username) {
+        bulkGameplanRows[i].profile_id = null;
+        bulkGameplanRows[i].has_existing_gameplan = false;
+        bulkGameplanRows[i].include = false;
+        renderBulkGameplanTable();
+        return;
+    }
+    fetch('../api/profile_lookup.php?q=' + encodeURIComponent(username))
+        .then(r => r.json())
+        .then(res => {
+            const results = res.data || [];
+            const exact = results.find(p => p.username.toLowerCase() === username.toLowerCase());
+            const match = exact || (results.length === 1 ? results[0] : null);
+            if (match) {
+                bulkGameplanRows[i].profile_id = match.id;
+                bulkGameplanRows[i].displayUsername = match.username;
+                bulkGameplanRows[i].has_existing_gameplan = !!match.has_gameplan;
+                bulkGameplanRows[i].include = true;
+            } else {
+                bulkGameplanRows[i].profile_id = null;
+                bulkGameplanRows[i].include = false;
+                notifyWarning(results.length > 1 ? `${results.length} profiles match "${username}" — be more specific.` : `No profile found for "${username}".`);
+            }
+            renderBulkGameplanTable();
+        })
+        .catch(err => notifyError('Profile lookup failed.', err));
+}
+
+function closeBulkGameplanModal() {
+    // Cancel = discard everything currently held in storage/gameplans/pending/
+    // for this batch — nothing was ever attached, so there's nothing to undo.
+    const allTokens = bulkGameplanRows.filter(r => r.token).map(r => r.token);
+    if (allTokens.length) {
+        fetch('../api/gameplan_bulk_confirm.php', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ attach: [], discard: allTokens })
+        });
+    }
+    bulkGameplanRows = [];
+    document.getElementById('bulkGameplanModal').style.display = 'none';
+}
+
+function confirmBulkGameplanUpload() {
+    const attach = bulkGameplanRows
+        .filter(r => r.token && r.include && r.profile_id)
+        .map(r => ({ token: r.token, profile_id: r.profile_id, filename: r.filename }));
+    const discard = bulkGameplanRows
+        .filter(r => r.token && (!r.include || !r.profile_id))
+        .map(r => r.token);
+
+    if (!attach.length) {
+        notifyWarning('Nothing checked to attach — check at least one row, or Cancel to discard all.');
+        return;
+    }
+
+    document.getElementById('bulkGameplanStatus').textContent = 'Attaching…';
+    fetch('../api/gameplan_bulk_confirm.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attach, discard })
+    })
+        .then(r => r.json())
+        .then(res => {
+            if (!res.success) { notifyError('Bulk attach failed.', res.error); return; }
+            notifyInfo(`Attached ${res.attached} of ${res.total_attempted} gameplan(s).${res.discarded ? ` ${res.discarded} skipped.` : ''}`);
+            if (res.failed.length) notifyWarning(`${res.failed.length} failed — details in console.`, res.failed);
+            bulkGameplanRows = [];
+            document.getElementById('bulkGameplanModal').style.display = 'none';
+            table.ajax.reload(null, false);
+        })
+        .catch(err => notifyError('Bulk attach failed.', err));
 }
 
 async function runVerification(profileId) {
@@ -2159,6 +2457,7 @@ async function runVerification(profileId) {
             if (!res.success) { notifyError('Verification run failed.', res.error); return; }
             notifyInfo('Verification & personalization ready — see Results in the row below.');
             showAccordionResultsIfOpen(profileId, res.verification_summary, res.draft_hook, res.draft_message);
+            table.ajax.reload(null, false); // bug fix: progress badge wasn't updating without a manual page refresh
         })
         .catch(err => { hideLoadingToast(); notifyError('Verification run failed.', err); });
 }
@@ -2175,8 +2474,36 @@ function rerunAiOnly(profileId) {
             if (!res.success) { notifyError('AI retry failed.', res.error); return; }
             notifyInfo('AI analysis ready — see Results in the row below.');
             showAccordionResultsIfOpen(profileId, res.verification_summary, res.draft_hook, res.draft_message);
+            table.ajax.reload(null, false); // bug fix: progress badge wasn't updating without a manual page refresh
         })
         .catch(err => { hideLoadingToast(); notifyError('AI retry failed.', err); });
+}
+
+/**
+ * Round 35, item #7: runs just the scraping half (api/run_verify_only.php)
+ * — no Gemini calls, so nothing lands in Results. Pairs with
+ * rerunAiOnly() above: scrape now, generate later once a gameplan's
+ * ready (or just to refresh transcripts/comments without paying for AI
+ * again).
+ */
+function runVerifyOnly(profileId) {
+    showLoadingToast('Scraping posts/comments only (no AI)…');
+    fetch('../api/run_verify_only.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile_id: profileId })
+    })
+        .then(r => r.json())
+        .then(res => {
+            hideLoadingToast();
+            if (!res.success) { notifyError('Verify Only failed.', res.error); return; }
+            if (res.reused_cached_data) {
+                notifyInfo(`Already have recent data — ${res.posts_checked} post(s), ${res.comments_checked} comment(s) on file, within the cache window.`);
+            } else {
+                notifyInfo(`Scraped ${res.new_posts_found} new post(s). Now have ${res.posts_checked} post(s), ${res.comments_checked} comment(s) on file — run "Retry AI Only" when ready.`);
+            }
+            table.ajax.reload(null, false);
+        })
+        .catch(err => { hideLoadingToast(); notifyError('Verify Only failed.', err); });
 }
 
 function loadAccordionResults() {
@@ -2237,6 +2564,55 @@ function showAccordionResultsIfOpen(profileId, verification, hook, followup) {
     renderAccordionResults(verification, hook, followup);
     const resultsBtn = document.querySelector('.accordion-tab-btn[data-tab="results"]');
     if (resultsBtn) switchAccordionTab('results', resultsBtn);
+}
+
+let accordionGrowthChartInstance = null;
+
+/**
+ * Round 35, item #3&4: Growth Chart's data/rendering, moved here from
+ * the old standalone openGrowthChart()/#growthModal — same
+ * api/profile_history.php call and same Chart.js config, now targeting
+ * the accordion's fixed #accGrowthCanvas instead of a modal's canvas.
+ */
+function loadAccordionGrowth() {
+    const canvas = document.getElementById('accGrowthCanvas');
+    if (!canvas) return;
+
+    fetch(`../api/profile_history.php?profile_id=${currentAccordionProfileId}`)
+        .then(r => r.json())
+        .then(res => {
+            const history = res.history || [];
+            const ctx = canvas.getContext('2d');
+            if (accordionGrowthChartInstance) {
+                accordionGrowthChartInstance.destroy();
+                accordionGrowthChartInstance = null;
+            }
+
+            const emptyNote = document.getElementById('accGrowthEmptyNote');
+            if (emptyNote) emptyNote.style.display = history.length < 2 ? 'block' : 'none';
+
+            accordionGrowthChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: history.map(h => h.imported_at.split(' ')[0]),
+                    datasets: [
+                        { label: 'Followers', data: history.map(h => h.followers_count), borderColor: '#60a5fa', yAxisID: 'y', tension: 0.2 },
+                        { label: 'Engagement %', data: history.map(h => h.engagement_rate), borderColor: '#6ee7b7', yAxisID: 'y1', tension: 0.2 },
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        y: { type: 'linear', position: 'left', ticks: { color: '#8b8f9a' } },
+                        y1: { type: 'linear', position: 'right', ticks: { color: '#8b8f9a' }, grid: { drawOnChartArea: false } },
+                        x: { ticks: { color: '#8b8f9a' } },
+                    },
+                    plugins: { legend: { labels: { color: '#e8e9ec' } } },
+                }
+            });
+        })
+        .catch(err => console.error('[ERROR] Could not load growth chart.', err));
 }
 
 function copyText(boxId, statusId) {

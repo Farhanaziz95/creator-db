@@ -38,6 +38,7 @@ require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/apify_client.php';
 require_once __DIR__ . '/../includes/gemini_client.php';
 require_once __DIR__ . '/../includes/message_generation.php';
+require_once __DIR__ . '/../includes/verification_scrape.php';
 header('Content-Type: application/json');
 
 try {
@@ -170,137 +171,26 @@ function run_verification_pipeline(PDO $pdo): void
         }
     }
 
-    // ---- Stage 1: Reel Scraper ----
-    // If we've scraped this profile before, only ask for reels newer than
-    // the most recent one already stored — confirmed real Apify param
-    // (apify.com/apify/instagram-reel-scraper/input-schema#onlyPostsNewerThan).
-    // Avoids re-paying for transcripts (billed per minute of audio, NOT
-    // per-1000-results as the cost table previously assumed) on content
-    // already fetched — matters most for the budget sweep hitting the
-    // same leads repeatedly.
-    $stmt = $pdo->prepare("SELECT MAX(posted_at) FROM post_transcripts WHERE profile_id = ? AND posted_at IS NOT NULL");
-    $stmt->execute([$profileId]);
-    $mostRecentPostedAt = $stmt->fetchColumn();
+    // ---- Stage 1 & 2: scraping (shared with api/run_verify_only.php —
+    // see includes/verification_scrape.php) ----
+    $scrape = run_scrape_stage($pdo, $profileId, $profile['username'], $config, $preferredKeyIds);
 
-    $estimatedReelCost = estimate_apify_cost($pdo, 'instagram_reel_scraper', $config['posts_to_check']);
-    $reelKey = pick_apify_key($pdo, $estimatedReelCost, $preferredKeyIds);
-
-    if (!$reelKey) {
-        fail_run($pdo, $runId, 'No active Apify keys configured. Add one in Settings first.');
+    if ($scrape['error']) {
+        fail_run($pdo, $runId, $scrape['error']);
         return;
     }
 
-    $reelInput = [
-        'username'               => [$profile['username']],
-        'resultsLimit'           => $config['posts_to_check'],
-        'skipPinnedPosts'        => true,
-        'skipTrialReels'         => false,
-        'includeSharesCount'     => false,
-        'includeTranscript'      => true,
-        'includeDownloadedVideo' => false,
-    ];
-    if ($mostRecentPostedAt) {
-        $reelInput['onlyPostsNewerThan'] = date('Y-m-d', strtotime($mostRecentPostedAt));
-    }
-
-    $reelResults = run_apify_actor($config['reel_scraper_actor'], $reelInput, $reelKey['api_key']);
+    $reelResults = $scrape['reel_results'];
+    $allCommentsText = $scrape['comments_text'];
+    $postUrls = $scrape['post_urls_used'];
 
     if (!$reelResults) {
-        if ($mostRecentPostedAt) {
-            // Not a failure — this profile just hasn't posted anything new
-            // since the last scrape. Re-run AI on existing data instead of
-            // burning an Apify call just to confirm nothing changed.
-            run_ai_passes_on_existing_data($pdo, $profileId, $gameplanText, $runId);
-            return;
-        }
-        fail_run($pdo, $runId, 'Reel Scraper returned nothing — check Apify input field names or that this profile has public reels.');
+        // Nothing new since the last scrape (not a failure) — re-run AI
+        // on existing data instead of burning an Apify call to confirm
+        // nothing changed.
+        run_ai_passes_on_existing_data($pdo, $profileId, $gameplanText, $runId);
         return;
     }
-
-    log_apify_usage($pdo, $reelKey['id'], 'instagram_reel_scraper', count($reelResults), $estimatedReelCost, $profileId);
-
-    foreach ($reelResults as $reel) {
-        $postUrl = $reel['url'] ?? null;
-        if (!$postUrl) continue;
-
-        // onlyPostsNewerThan is date-based, not exact-timestamp, so the
-        // boundary post could come back again — skip if we already have it.
-        $stmt = $pdo->prepare("SELECT 1 FROM post_transcripts WHERE profile_id = ? AND post_url = ?");
-        $stmt->execute([$profileId, $postUrl]);
-        if ($stmt->fetchColumn()) continue;
-
-        $transcript = trim($reel['transcript'] ?? '');
-        // No actual spoken transcript came back — likely music-only/b-roll
-        // content, not the creator talking. No OCR available, so this
-        // needs a human glance before trusting any AI personalization
-        // built from it.
-        $needsManualReview = ($transcript === '') ? 1 : 0;
-
-        $stmt = $pdo->prepare("
-            INSERT INTO post_transcripts (profile_id, post_url, shortcode, caption, transcript, likes_count, comments_count, posted_at, needs_manual_review)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ");
-        $stmt->execute([
-            $profileId, $postUrl,
-            $reel['shortCode'] ?? $reel['shortcode'] ?? null,
-            $reel['caption'] ?? '',
-            $transcript,
-            (int) ($reel['likesCount'] ?? 0),
-            (int) ($reel['commentsCount'] ?? 0),
-            !empty($reel['timestamp']) ? date('Y-m-d H:i:s', strtotime($reel['timestamp'])) : null,
-            $needsManualReview,
-        ]);
-    }
-
-    // ---- Stage 2: Comment Scraper — CONCENTRATED on top-K highest-engagement posts only ----
-    // This is the main cost lever: a highly-engaged post naturally yields
-    // close to the full per-post comment cap regardless, so fetching
-    // comments from all N posts scales cost with N for little extra
-    // signal. The richest audience-intent signal lives on the
-    // highest-engagement posts anyway, so we concentrate spend there
-    // instead of spreading it thin.
-    usort($reelResults, fn($a, $b) =>
-        (($b['likesCount'] ?? 0) + ($b['commentsCount'] ?? 0)) - (($a['likesCount'] ?? 0) + ($a['commentsCount'] ?? 0))
-    );
-    $topPosts = array_slice($reelResults, 0, $config['top_k_for_comments']);
-    $postUrls = array_values(array_filter(array_map(fn($r) => $r['url'] ?? null, $topPosts)));
-
-    $allCommentsText = [];
-    if ($postUrls) {
-        $estimatedCommentTotal = count($postUrls) * $config['comments_per_post'];
-        $estimatedCommentCost  = estimate_apify_cost($pdo, 'instagram_comment_scraper', $estimatedCommentTotal);
-        $commentKey = pick_apify_key($pdo, $estimatedCommentCost, $preferredKeyIds);
-
-        $commentResults = run_apify_actor($config['comment_scraper_actor'], [
-            'directUrls'   => $postUrls,
-            'resultsLimit' => $config['comments_per_post'],
-        ], $commentKey['api_key']);
-
-        if ($commentResults) {
-            log_apify_usage($pdo, $commentKey['id'], 'instagram_comment_scraper', count($commentResults), $estimatedCommentCost, $profileId);
-
-            foreach ($commentResults as $comment) {
-                $text = $comment['text'] ?? $comment['commentText'] ?? '';
-                if (!$text) continue;
-                $allCommentsText[] = $text;
-
-                $stmt = $pdo->prepare("
-                    INSERT INTO post_comments (profile_id, post_url, commenter_username, comment_text, likes_count)
-                    VALUES (?, ?, ?, ?, ?)
-                ");
-                $stmt->execute([
-                    $profileId,
-                    $comment['postUrl'] ?? $comment['inputUrl'] ?? '',
-                    $comment['ownerUsername'] ?? $comment['username'] ?? '',
-                    $text,
-                    (int) ($comment['likesCount'] ?? 0),
-                ]);
-            }
-        }
-    }
-    // If comment scraping fails or yields nothing, we deliberately continue
-    // — verification will just note comments weren't available,
-    // personalization can still work off transcripts alone.
 
     // ---- Stage 3 & 4: Gemini passes ----
     [$verificationSummary, $draftHook, $draftFollowup] = run_gemini_passes($pdo, $profileId, $gameplanText, $reelResults, $allCommentsText);
