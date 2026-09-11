@@ -104,7 +104,7 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
     .legend-swatch { display:inline-block; width:14px; height:14px; border-radius:3px; margin-right:6px; vertical-align:middle; }
     .progress-badges { white-space: nowrap; font-size: 13px; }
     .bio-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
-    .action-icon-group { display: flex; flex-wrap: wrap; gap: 4px; max-width: 210px; }
+    .action-icon-group { display: flex; flex-wrap: wrap; gap: 4px; width: 180px; }
     .action-menu { position: relative; display: inline-block; white-space: nowrap; }
     .action-menu-btn { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 4px 9px; border-radius: 4px; cursor: pointer; font-size: 13px; margin-left: 4px; }
     .action-menu-content { display: none; position: absolute; right: 0; top: 100%; margin-top: 4px; background: #1c2029; border: 1px solid var(--border); border-radius: 6px; min-width: 190px; z-index: 100; box-shadow: 0 6px 16px rgba(0,0,0,0.5); overflow: hidden; }
