@@ -569,6 +569,7 @@ $flozyDashboardBaseUrl = rtrim((string) ($flozyDashboardConfig['dashboard_base_u
             <div class="action-menu-content" id="columnToggleMenu" style="min-width:180px; max-height:340px; overflow-y:auto;"></div>
         </div>
         <a href="content_studio.php" style="align-self:center; color:var(--muted); font-size:13px;">🎬 Content Studio</a>
+        <a href="youtube.php" style="align-self:center; color:var(--muted); font-size:13px;">▶️ YouTube Pipeline</a>
         <a href="settings.php" style="align-self:center; color:var(--muted); font-size:13px;">⚙️ Settings (Default Task List)</a>
     </div>
     <div class="tabs" id="tierSubTabWrap" style="display:none; margin-top:-8px; margin-bottom:16px;">
