@@ -40,9 +40,9 @@ $maxPerKeyword = (int) $round['max_channels_per_keyword'];
 
 $insertStmt = $pdo->prepare("
     INSERT IGNORE INTO youtube_channels
-        (round_id, channel_url, channel_name, sub_niche, subscribers, total_videos, total_views,
-         is_monetized, country, channel_description, email, email_source, website, social_links, needs_manual_review)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (round_id, channel_url, youtube_channel_id, channel_username, channel_name, sub_niche, subscribers, total_videos, total_views,
+         is_verified, country, channel_description, email, email_source, website, social_links, needs_manual_review)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ");
 
 $discovered = 0;
@@ -76,12 +76,14 @@ foreach ($subNiches as $keyword) {
         $insertStmt->execute([
             $roundId,
             $candidate['channel_url'],
+            $detail['youtube_channel_id'],
+            $detail['channel_username'],
             $detail['channel_name'] ?: $candidate['channel_name'],
             $keyword,
             $detail['subscribers'],
             $detail['total_videos'],
             $detail['total_views'],
-            $detail['is_monetized'],
+            $detail['is_verified'],
             $detail['country'],
             $detail['channel_description'],
             $detail['email'],

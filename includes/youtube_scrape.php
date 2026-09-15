@@ -10,14 +10,14 @@ require_once __DIR__ . '/email_extraction.php'; // extract_email_from_bio() — 
  *
  * Field names below are confirmed from the actor's OWN official example
  * (apify.com/streamers/youtube-scraper/examples/find-youtube-influencers.md)
- * and its README's own "Channel info" / "A single video" output samples —
- * not guessed or borrowed from a different actor's schema. One inferred
- * detail, flagged where used below: pointing startUrls at a channel's
- * `/about` page (rather than its bare URL or `/videos`) is what the
- * README's own example shows returning the full channel-detail fields
- * (numberOfSubscribers, channelDescription, isMonetized, etc.) — if that
- * turns out not to hold for every channel shape, that's the first thing
- * to check.
+ * and a real raw output sample pulled from an actual run — not guessed
+ * or borrowed from a different actor's schema. Confirmed from that real
+ * sample: pointing startUrls at a channel's `/about` page (rather than
+ * its bare URL or `/videos`) is what returns the full channel-detail
+ * record (numberOfSubscribers, channelDescription, isChannelVerified,
+ * etc.) — and confirmed there is NO monetization field anywhere in this
+ * actor's output (Layer 1 originally guessed 'isMonetized' from
+ * marketing copy; it doesn't exist and came back null on every row).
  *
  * IMPORTANT: maxResultsShorts and maxResultStreams must be explicitly
  * set to 0 on every call — the actor's own issue tracker confirms that
@@ -102,10 +102,17 @@ function youtube_fetch_channel_detail(PDO $pdo, string $channelUrl, ?array $pref
 
     return [
         'channel_name'        => $r['channelName'] ?? null,
+        'youtube_channel_id'  => $r['channelId'] ?? null,
+        'channel_username'    => $r['channelUsername'] ?? null,
         'subscribers'         => isset($r['numberOfSubscribers']) ? (int) $r['numberOfSubscribers'] : null,
         'total_videos'        => isset($r['channelTotalVideos']) ? (int) $r['channelTotalVideos'] : null,
         'total_views'         => isset($r['channelTotalViews']) ? (int) str_replace(',', '', (string) $r['channelTotalViews']) : null,
-        'is_monetized'        => isset($r['isMonetized']) ? (int) (bool) $r['isMonetized'] : null,
+        // Confirmed from a real raw sample: this actor has NO
+        // monetization field at all — 'isMonetized' (Layer 1's original
+        // guess) never existed and always came back null. The real,
+        // useful field here is isChannelVerified (YouTube's verified
+        // checkmark) — a trust/scale signal, not a monetization one.
+        'is_verified'         => isset($r['isChannelVerified']) ? (int) (bool) $r['isChannelVerified'] : null,
         'country'             => $r['channelLocation'] ?? null,
         'channel_description' => $description,
         'email'               => extract_email_from_bio($description),
