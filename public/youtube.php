@@ -140,6 +140,9 @@
     <button class="tab-btn" data-tab="rejected" onclick="switchTab('rejected')">Rejected</button>
     <button class="tab-btn" data-tab="pushed" onclick="switchTab('pushed')">Pushed to Flozy</button>
 </div>
+<p style="color:var(--muted); font-size:12px; margin:-10px 0 16px;">
+    💡 Tip: sort a column (e.g. Subs), check one row, then shift-click another row's checkbox to select everything between them.
+</p>
 
 <div class="panel" id="bulkBar" style="display:none;">
     <div class="controls">
@@ -276,7 +279,7 @@ function initTable() {
             },
             {
                 data: 'id', orderable: false,
-                render: (id) => `<input type="checkbox" ${selectedIds.has(id) ? 'checked' : ''} onchange="toggleSelect(${id}, this.checked)">`
+                render: (id) => `<input type="checkbox" ${selectedIds.has(id) ? 'checked' : ''} onchange="toggleSelect(${id}, this.checked, event)">`
             },
             {
                 data: 'channel_name',
@@ -369,6 +372,7 @@ function switchTab(tab) {
     // without this) — clear on every switch, and rebuild the bulk bar's
     // buttons for whatever action actually makes sense on this tab.
     selectedIds.clear();
+    lastCheckedId = null;
     updateBulkBar();
     applyTabFilter();
 }
@@ -524,8 +528,32 @@ function pushOneToFlozy(channelId) {
         .catch(err => showToast('Push failed: ' + err, true));
 }
 
-function toggleSelect(id, checked) {
-    if (checked) selectedIds.add(id); else selectedIds.delete(id);
+let lastCheckedId = null; // for shift-click range selection, below
+
+/**
+ * Shift-click range select — sort by whatever column matters (e.g.
+ * Subs), click one row's checkbox, shift-click another, and everything
+ * BETWEEN them (in the table's current sorted/searched order) gets
+ * selected too. Uses DataTables' own current row order
+ * (`{ search: 'applied' }`) so the range respects sorting and any active
+ * search filter, not just the original fetch order.
+ */
+function toggleSelect(id, checked, event) {
+    if (event && event.shiftKey && lastCheckedId !== null) {
+        const orderedIds = table.rows({ search: 'applied' }).data().toArray().map(r => r.id);
+        const fromIdx = orderedIds.indexOf(lastCheckedId);
+        const toIdx = orderedIds.indexOf(id);
+        if (fromIdx !== -1 && toIdx !== -1) {
+            const [start, end] = fromIdx < toIdx ? [fromIdx, toIdx] : [toIdx, fromIdx];
+            for (let i = start; i <= end; i++) {
+                if (checked) selectedIds.add(orderedIds[i]); else selectedIds.delete(orderedIds[i]);
+            }
+            table.rows().invalidate().draw(false);
+        }
+    } else {
+        if (checked) selectedIds.add(id); else selectedIds.delete(id);
+    }
+    lastCheckedId = id;
     updateBulkBar();
 }
 
@@ -557,6 +585,7 @@ function updateBulkBar() {
     const buttons = document.getElementById('bulkActionButtons');
     if (currentTab === 'raw') {
         buttons.innerHTML = `
+            <button onclick="bulkRunScoring()">🤖 Score Selected</button>
             <button onclick="bulkSetStatus('qualified')">✅ Qualify Selected</button>
             <button class="ghost" onclick="bulkSetStatus('rejected')">❌ Reject Selected</button>`;
     } else if (currentTab === 'qualified') {
@@ -565,11 +594,42 @@ function updateBulkBar() {
             <button class="ghost" onclick="bulkSetStatus('raw')">↩️ Reset Selected to Raw</button>`;
     } else if (currentTab === 'rejected') {
         buttons.innerHTML = `<button class="ghost" onclick="bulkSetStatus('raw')">↩️ Reset Selected to Raw</button>`;
+    } else if (currentTab === 'all') {
+        // Mixed statuses on this tab — Score Selected is the one action
+        // that's still safe to offer regardless (re-scoring an
+        // already-scored channel just overwrites its score, no harm),
+        // so it's the only bulk button shown here.
+        buttons.innerHTML = `<button onclick="bulkRunScoring()">🤖 Score Selected</button>`;
     } else {
-        // 'pushed' (nothing left to do) or 'all' (mixed statuses — no
-        // single action would apply to every selected row)
-        buttons.innerHTML = '';
+        buttons.innerHTML = ''; // 'pushed' — nothing left to do
     }
+}
+
+/**
+ * The whole point of this button: sort by whatever matters (subscribers,
+ * score, whatever), shift-click a range you actually want the AI to
+ * look at, and score ONLY that — instead of an automatic sweep of every
+ * 'raw' channel burning a Gemini call on ones you'd have skipped anyway.
+ */
+function bulkRunScoring() {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    document.getElementById('jobStatus').textContent = `Scoring ${ids.length} selected channel(s) — paced to avoid the shared Gemini rate limit…`;
+    fetch('../api/youtube_run_scoring.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel_ids: ids })
+    })
+        .then(r => r.json())
+        .then(res => {
+            document.getElementById('jobStatus').textContent = '';
+            if (!res.success) { showToast(res.error || 'Scoring failed.', true); return; }
+            let msg = `Scored ${res.scored} of ${ids.length} selected (${res.qualified} qualified, ${res.rejected} rejected, ${res.needs_review} needs review).`;
+            if (res.stopped_early) msg += ' ' + res.stop_reason;
+            showToast(msg);
+            clearSelection();
+            loadRounds(currentRoundId);
+        })
+        .catch(err => { document.getElementById('jobStatus').textContent = ''; showToast('Scoring failed: ' + err, true); });
 }
 
 function bulkSetStatus(status) {

@@ -1,9 +1,11 @@
 <?php
 /**
  * YouTube pipeline, Layer 2: runs Stage 3 (video sampling) + the AI
- * qualifying pass for every 'raw' channel in a round (or a single
- * channel, for re-scoring one). Separate step from Layer 1's discovery
- * — same "scrape now, judge later" split as Instagram's Verify Only vs
+ * qualifying pass — for every 'raw' channel in a round (capped batch,
+ * auto-resuming), a single channel (re-score), or an explicit hand-
+ * picked list (channel_ids — bypasses the batch cap, since a person who
+ * selected exactly what they want scored shouldn't be second-guessed).
+ * Same "scrape now, judge later" split as Instagram's Verify Only vs
  * Retry AI Only.
  */
 set_time_limit(0);
@@ -20,11 +22,12 @@ header('Content-Type: application/json');
 $input = json_decode(file_get_contents('php://input'), true);
 $roundId = isset($input['round_id']) ? (int) $input['round_id'] : null;
 $channelId = isset($input['channel_id']) ? (int) $input['channel_id'] : null;
+$channelIds = isset($input['channel_ids']) && is_array($input['channel_ids']) ? array_values(array_filter(array_map('intval', $input['channel_ids']))) : null;
 $preferredKeyIds = isset($input['preferred_key_ids']) ? array_map('intval', $input['preferred_key_ids']) : null;
 
-if (!$roundId && !$channelId) {
+if (!$roundId && !$channelId && !$channelIds) {
     http_response_code(400);
-    echo json_encode(['error' => 'round_id or channel_id is required.']);
+    echo json_encode(['error' => 'round_id, channel_id, or channel_ids is required.']);
     exit;
 }
 
@@ -36,7 +39,19 @@ $videoSampleCount = $settings ? (int) $settings['video_sample_count'] : 5;
 $callDelaySeconds = $settings ? (int) $settings['gemini_call_delay_seconds'] : 4;
 $batchLimit = $settings ? (int) $settings['scoring_batch_limit'] : 10;
 
-if ($channelId) {
+if ($channelIds) {
+    // An explicit hand-picked selection deliberately BYPASSES
+    // scoring_batch_limit — that cap exists to stop an *automatic*
+    // round-wide sweep from blowing through the shared Gemini quota
+    // unattended, not to second-guess a person who sorted by subscriber
+    // count, picked exactly the range they want scored, and asked for
+    // it. The per-call pacing delay below still applies regardless —
+    // that's the part actually protecting the quota, not the count.
+    $placeholders = implode(',', array_fill(0, count($channelIds), '?'));
+    $stmt = $pdo->prepare("SELECT * FROM youtube_channels WHERE id IN ($placeholders)");
+    $stmt->execute($channelIds);
+    $channels = $stmt->fetchAll();
+} elseif ($channelId) {
     $stmt = $pdo->prepare("SELECT * FROM youtube_channels WHERE id = ?");
     $stmt->execute([$channelId]);
     $channels = array_filter([$stmt->fetch()]);
@@ -168,7 +183,7 @@ echo json_encode([
     'failed'       => $failed,
     'stopped_early' => $stoppedEarly,
     'stop_reason'   => $stopReason,
-    'note'          => $roundId && !$channelId
+    'note'          => ($roundId && !$channelId && !$channelIds)
         ? "Processed up to {$batchLimit} per run (scoring_batch_limit in Settings) — re-run this same call to continue with the rest of the round."
         : null,
 ]);
