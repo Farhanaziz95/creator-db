@@ -8,6 +8,9 @@ $input = json_decode(file_get_contents('php://input'), true);
 
 $niche = trim($input['niche'] ?? '');
 $subNiches = array_values(array_filter(array_map('trim', $input['sub_niches'] ?? [])));
+// Optional secondary discovery path — purely additive, a round with no
+// hashtags behaves exactly as before.
+$hashtags = array_values(array_filter(array_map('trim', $input['hashtags'] ?? [])));
 $subscriberMin = (int) ($input['subscriber_min'] ?? 1000);
 $maxPerKeyword = (int) ($input['max_channels_per_keyword'] ?? 100);
 
@@ -18,9 +21,9 @@ if ($niche === '' || !$subNiches) {
 }
 
 $stmt = $pdo->prepare("
-    INSERT INTO youtube_rounds (niche, sub_niches, subscriber_min, max_channels_per_keyword)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO youtube_rounds (niche, sub_niches, hashtags, subscriber_min, max_channels_per_keyword)
+    VALUES (?, ?, ?, ?, ?)
 ");
-$stmt->execute([$niche, json_encode($subNiches), $subscriberMin, $maxPerKeyword]);
+$stmt->execute([$niche, json_encode($subNiches), $hashtags ? json_encode($hashtags) : null, $subscriberMin, $maxPerKeyword]);
 
 echo json_encode(['success' => true, 'round_id' => (int) $pdo->lastInsertId()]);

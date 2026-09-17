@@ -1,11 +1,13 @@
 <?php
 /**
  * YouTube pipeline, Layer 1: runs discovery + channel-detail for every
- * sub-niche keyword on a round, inserting raw candidates into
- * youtube_channels. Deliberately does NOT run Stage 3 (video sampling)
- * or any AI scoring here — those are their own step (Layer 2), same
- * split as Instagram's "Verify Only" vs "Retry AI Only": scrape now,
- * judge later.
+ * sub-niche keyword on a round (primary path), plus every hashtag if
+ * any are set on the round (optional secondary path, purely additive —
+ * a round with no hashtags behaves exactly as before). Inserts raw
+ * candidates into youtube_channels. Deliberately does NOT run Stage 3
+ * (video sampling) or any AI scoring here — those are their own step
+ * (Layer 2), same split as Instagram's "Verify Only" vs "Retry AI Only":
+ * scrape now, judge later.
  */
 set_time_limit(0);
 ignore_user_abort(true);
@@ -23,6 +25,7 @@ $preferredKeyIds = isset($input['preferred_key_ids']) ? array_map('intval', $inp
 
 $config = require __DIR__ . '/../config/youtube.php';
 $actorSlug = $config['youtube_scraper_actor'];
+$hashtagActorSlug = $config['youtube_hashtag_actor'];
 
 $stmt = $pdo->prepare("SELECT * FROM youtube_rounds WHERE id = ?");
 $stmt->execute([$roundId]);
@@ -35,6 +38,7 @@ if (!$round) {
 }
 
 $subNiches = json_decode($round['sub_niches'], true) ?: [];
+$hashtags = $round['hashtags'] ? (json_decode($round['hashtags'], true) ?: []) : [];
 $subscriberMin = (int) $round['subscriber_min'];
 $maxPerKeyword = (int) $round['max_channels_per_keyword'];
 
@@ -50,56 +54,78 @@ $detailFetched = 0;
 $belowSubscriberFloor = 0;
 $detailFailed = 0;
 
+/**
+ * Shared by both the keyword loop and the hashtag loop below — fetches
+ * Stage 2 detail for one candidate, applies the subscriber floor, and
+ * inserts if it passes. $sourceLabel goes into the sub_niche column so
+ * hashtag-sourced channels are visually distinguishable from
+ * keyword-sourced ones (e.g. "#dividendinvesting" vs "dividend investing").
+ */
+function process_candidate(PDO $pdo, PDOStatement $insertStmt, int $roundId, array $candidate, string $sourceLabel, int $subscriberMin, ?array $preferredKeyIds, string $actorSlug, array &$counters): void
+{
+    $counters['discovered']++;
+
+    $detail = youtube_fetch_channel_detail($pdo, $candidate['channel_url'], $preferredKeyIds, $actorSlug);
+
+    if (!$detail) {
+        $counters['detailFailed']++;
+        return;
+    }
+    $counters['detailFetched']++;
+
+    if ($detail['subscribers'] !== null && $detail['subscribers'] < $subscriberMin) {
+        $counters['belowSubscriberFloor']++;
+        return;
+    }
+
+    $insertStmt->execute([
+        $roundId,
+        $candidate['channel_url'],
+        $detail['youtube_channel_id'],
+        $detail['channel_username'],
+        $detail['channel_name'] ?: $candidate['channel_name'],
+        $sourceLabel,
+        $detail['subscribers'],
+        $detail['total_videos'],
+        $detail['total_views'],
+        $detail['is_verified'],
+        $detail['country'],
+        $detail['channel_description'],
+        $detail['email'],
+        $detail['email'] ? 'regex' : null,
+        $detail['website'],
+        json_encode($detail['social_links']),
+        $detail['channel_description'] === '' ? 1 : 0, // empty About text needs a human glance, same philosophy as Instagram's empty-transcript flag
+    ]);
+}
+
+$counters = ['discovered' => 0, 'detailFetched' => 0, 'belowSubscriberFloor' => 0, 'detailFailed' => 0];
+
+// Primary path — keyword search.
 foreach ($subNiches as $keyword) {
     $candidates = youtube_discover_channels($pdo, $keyword, $maxPerKeyword, $preferredKeyIds, $actorSlug);
-
     foreach ($candidates as $candidate) {
-        $discovered++;
+        // Skip if this exact channel is already in THIS round (the same
+        // channel can legitimately surface under multiple keywords/
+        // hashtags within one round — first source to find it wins the
+        // sub_niche label, INSERT IGNORE handles the rest).
+        process_candidate($pdo, $insertStmt, $roundId, $candidate, $keyword, $subscriberMin, $preferredKeyIds, $actorSlug, $counters);
+    }
+}
 
-        // Skip if this exact channel is already in THIS round (the
-        // same channel can legitimately surface under multiple
-        // sub-niche keywords within one round — first keyword to find
-        // it wins the sub_niche label, INSERT IGNORE handles the rest).
-        $detail = youtube_fetch_channel_detail($pdo, $candidate['channel_url'], $preferredKeyIds, $actorSlug);
-
-        if (!$detail) {
-            $detailFailed++;
-            continue;
-        }
-        $detailFetched++;
-
-        if ($detail['subscribers'] !== null && $detail['subscribers'] < $subscriberMin) {
-            $belowSubscriberFloor++;
-            continue;
-        }
-
-        $insertStmt->execute([
-            $roundId,
-            $candidate['channel_url'],
-            $detail['youtube_channel_id'],
-            $detail['channel_username'],
-            $detail['channel_name'] ?: $candidate['channel_name'],
-            $keyword,
-            $detail['subscribers'],
-            $detail['total_videos'],
-            $detail['total_views'],
-            $detail['is_verified'],
-            $detail['country'],
-            $detail['channel_description'],
-            $detail['email'],
-            $detail['email'] ? 'regex' : null,
-            $detail['website'],
-            json_encode($detail['social_links']),
-            $detail['channel_description'] === '' ? 1 : 0, // empty About text needs a human glance, same philosophy as Instagram's empty-transcript flag
-        ]);
+// Optional secondary path — hashtags, if any are set on this round.
+foreach ($hashtags as $hashtag) {
+    $candidates = youtube_discover_channels_by_hashtag($pdo, $hashtag, $maxPerKeyword, $preferredKeyIds, $hashtagActorSlug, $actorSlug);
+    foreach ($candidates as $candidate) {
+        process_candidate($pdo, $insertStmt, $roundId, $candidate, '#' . ltrim($hashtag, '#'), $subscriberMin, $preferredKeyIds, $actorSlug, $counters);
     }
 }
 
 echo json_encode([
     'success'                 => true,
-    'discovered'               => $discovered,
-    'detail_fetched'           => $detailFetched,
-    'detail_failed'            => $detailFailed,
-    'below_subscriber_floor'   => $belowSubscriberFloor,
-    'saved'                    => $discovered - $detailFailed - $belowSubscriberFloor,
+    'discovered'              => $counters['discovered'],
+    'detail_fetched'          => $counters['detailFetched'],
+    'detail_failed'           => $counters['detailFailed'],
+    'below_subscriber_floor'  => $counters['belowSubscriberFloor'],
+    'saved'                   => $counters['discovered'] - $counters['detailFailed'] - $counters['belowSubscriberFloor'],
 ]);

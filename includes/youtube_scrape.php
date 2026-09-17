@@ -69,6 +69,90 @@ function youtube_discover_channels(PDO $pdo, string $keyword, int $maxResults, ?
 }
 
 /**
+ * Optional secondary discovery path (previously on hold, now built) —
+ * hashtag-based instead of keyword-search-based, using
+ * apify/social-media-hashtag-research restricted to YouTube only.
+ *
+ * The hashtag actor only returns VIDEO-level data for YouTube (title,
+ * video URL, channel NAME — no subscriber count, no channel URL at
+ * all), so each result needs one follow-up call through the MAIN
+ * youtube_scraper actor (single video URL) to resolve the actual
+ * channel URL — confirmed from a real single-video output sample that
+ * this attaches channelUrl/channelName/numberOfSubscribers to an
+ * individual video result. That resolve call is billed under the normal
+ * 'youtube_scraper' cost bucket, same as any other discovery-stage call
+ * — only the hashtag lookup itself uses the separate
+ * 'youtube_hashtag_scraper' cost key (different actor, different rate).
+ *
+ * One v1 simplification worth knowing: a resolve call fires per
+ * hashtag-returned video even if two videos turn out to share the same
+ * channel — cheap enough at typical maxPerSocial values not to bother
+ * de-duping before resolving, but worth revisiting if hashtag rounds
+ * get large.
+ *
+ * One assumption not 100% confirmed: the `socials` input field's
+ * accepted value for YouTube is the string "youtube" (matches the
+ * output's own `fromSocial: "youtube"` field, but the input schema page
+ * didn't spell out its enum values explicitly) — first thing to check
+ * if this comes back empty.
+ */
+function youtube_discover_channels_by_hashtag(PDO $pdo, string $hashtag, int $maxResults, ?array $preferredKeyIds, string $hashtagActorSlug, string $scraperActorSlug): array
+{
+    $estimatedCost = estimate_apify_cost($pdo, 'youtube_hashtag_scraper', $maxResults);
+    $key = pick_apify_key($pdo, $estimatedCost, $preferredKeyIds);
+    if (!$key) {
+        return [];
+    }
+
+    $hashtagClean = ltrim(trim($hashtag), '#');
+
+    $results = run_apify_actor($hashtagActorSlug, [
+        'hashtags'     => [$hashtagClean],
+        'socials'      => ['youtube'],
+        'maxPerSocial' => $maxResults,
+    ], $key['api_key']);
+
+    if (!$results) {
+        return [];
+    }
+
+    log_apify_usage($pdo, $key['id'], 'youtube_hashtag_scraper', count($results), $estimatedCost, null);
+
+    $seen = [];
+    $channels = [];
+
+    foreach ($results as $r) {
+        if (($r['fromSocial'] ?? '') !== 'youtube') continue; // defensive — we only asked for youtube, but be defensive about what comes back
+        $videoUrl = $r['postUrl'] ?? null;
+        if (!$videoUrl) continue;
+
+        $resolveCost = estimate_apify_cost($pdo, 'youtube_scraper', 1);
+        $resolveKey = pick_apify_key($pdo, $resolveCost, $preferredKeyIds);
+        if (!$resolveKey) continue;
+
+        $videoResult = run_apify_actor($scraperActorSlug, [
+            'startUrls'         => [['url' => $videoUrl]],
+            'maxResultsShorts'  => 0,
+            'maxResultStreams'  => 0,
+        ], $resolveKey['api_key']);
+
+        if (!$videoResult) continue;
+        log_apify_usage($pdo, $resolveKey['id'], 'youtube_scraper', count($videoResult), $resolveCost, null);
+
+        $channelUrl = $videoResult[0]['channelUrl'] ?? null;
+        if (!$channelUrl || isset($seen[$channelUrl])) continue;
+        $seen[$channelUrl] = true;
+
+        $channels[] = [
+            'channel_url'  => $channelUrl,
+            'channel_name' => $videoResult[0]['channelName'] ?? ($r['authorMeta.name'] ?? null),
+        ];
+    }
+
+    return $channels;
+}
+
+/**
  * Stage 2 — channel detail. One call per candidate channel (the
  * "/about" URL — see docblock above). This is where subscriber-count
  * filtering becomes possible at all, and where email gets regex-

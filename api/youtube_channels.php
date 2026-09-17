@@ -29,6 +29,7 @@ $channels = $stmt->fetchAll();
 foreach ($channels as &$c) {
     $c['ai_reasoning'] = $c['ai_reasoning'] ? json_decode($c['ai_reasoning'], true) : null;
     $c['sample_video_titles'] = $c['sample_video_titles'] ? json_decode($c['sample_video_titles'], true) : [];
+    $c['sample_video_descriptions'] = $c['sample_video_descriptions'] ? json_decode($c['sample_video_descriptions'], true) : [];
     $c['social_links'] = $c['social_links'] ? json_decode($c['social_links'], true) : [];
     $c['comment_recurring_themes'] = $c['comment_recurring_themes'] ? json_decode($c['comment_recurring_themes'], true) : [];
 }

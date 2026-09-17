@@ -16,6 +16,7 @@ $rounds = $pdo->query("
 
 foreach ($rounds as &$r) {
     $r['sub_niches'] = json_decode($r['sub_niches'], true) ?: [];
+    $r['hashtags'] = $r['hashtags'] ? (json_decode($r['hashtags'], true) ?: []) : [];
 }
 
 echo json_encode(['rounds' => $rounds]);

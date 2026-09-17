@@ -88,6 +88,7 @@
         <select id="roundSelect" style="min-width:280px;" onchange="loadRound()"></select>
         <button class="ghost" onclick="toggleNewRoundForm()">+ New Round</button>
         <button class="ghost" onclick="toggleSettingsForm()">⚙️ Settings</button>
+        <button class="ghost" onclick="openCompareRounds()">📊 Compare Rounds</button>
     </div>
 
     <div id="newRoundForm" style="display:none; margin-top:16px; padding-top:16px; border-top:1px solid var(--border);">
@@ -97,10 +98,14 @@
             <label>Sub-niche keywords (comma-separated)</label>
             <input type="text" id="newRoundSubNiches" placeholder="budgeting, dividend investing" style="width:320px;">
         </div>
+        <div class="controls" style="margin-bottom:10px;">
+            <label>Hashtags (optional, comma-separated, secondary discovery path)</label>
+            <input type="text" id="newRoundHashtags" placeholder="e.g. budgetingtips, fire" style="width:320px;">
+        </div>
         <div class="controls">
             <label>Min subscribers</label>
             <input type="number" id="newRoundSubMin" value="1000" style="width:100px;">
-            <label>Max channels per keyword</label>
+            <label>Max channels per keyword/hashtag</label>
             <input type="number" id="newRoundMaxPerKeyword" value="50" style="width:100px;">
             <button onclick="createRound()">Create Round</button>
         </div>
@@ -122,6 +127,37 @@
             <input type="number" id="settingBatchLimit" style="width:80px;">
             <button onclick="saveSettings()">Save</button>
         </div>
+    </div>
+</div>
+
+<!-- Compare Rounds modal — the actual payoff of the round/cohort idea:
+     see raw→qualified→pushed side by side across every niche tested,
+     instead of tallying it by hand from the dropdown one at a time. -->
+<div id="compareRoundsModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:1000px; width:92%; max-height:85vh; overflow-y:auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <h2 style="margin:0; font-size:16px;">📊 Compare Rounds</h2>
+            <button class="ghost small" onclick="closeCompareRounds()">✕ Close</button>
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+                <tr style="text-align:left; color:var(--muted); border-bottom:1px solid var(--border);">
+                    <th style="padding:8px;">Niche</th>
+                    <th style="padding:8px;">Sub-niches</th>
+                    <th style="padding:8px;">Total</th>
+                    <th style="padding:8px;">Raw</th>
+                    <th style="padding:8px;">Qualified</th>
+                    <th style="padding:8px;">Rejected</th>
+                    <th style="padding:8px;">Pushed</th>
+                    <th style="padding:8px;">With Email</th>
+                    <th style="padding:8px;">Qualify Rate</th>
+                </tr>
+            </thead>
+            <tbody id="compareRoundsBody"></tbody>
+        </table>
+        <p style="font-size:12px; color:var(--muted); margin-top:14px;">
+            Qualify Rate = Qualified ÷ Total scored so far (Raw channels not yet scored aren't counted against a round — a round with a lot left in Raw isn't necessarily worse, just earlier in review).
+        </p>
     </div>
 </div>
 
@@ -211,7 +247,7 @@ function loadRounds(selectRoundId) {
             rounds = res.rounds || [];
             const select = document.getElementById('roundSelect');
             select.innerHTML = rounds.map(r =>
-                `<option value="${r.id}">${r.niche} — ${r.sub_niches.join(', ')} (${r.total_channels} channels)</option>`
+                `<option value="${r.id}">${r.niche} — ${r.sub_niches.join(', ')}${r.hashtags && r.hashtags.length ? ' + #' + r.hashtags.join(', #') : ''} (${r.total_channels} channels)</option>`
             ).join('');
             if (rounds.length) {
                 select.value = selectRoundId || currentRoundId || rounds[0].id;
@@ -407,7 +443,13 @@ function toggleChannelDetail(btnEl) {
     const c = row.data();
     const reasoning = c.ai_reasoning || {};
     const titlesHtml = (c.sample_video_titles && c.sample_video_titles.length)
-        ? `<ul style="font-size:12px; color:var(--muted); margin:0 0 10px; padding-left:18px;">${c.sample_video_titles.map(t => `<li>${t.replace(/</g, '&lt;')}</li>`).join('')}</ul>`
+        ? `<ul style="font-size:12px; color:var(--muted); margin:0 0 10px; padding-left:18px;">${c.sample_video_titles.map((t, i) => {
+            const desc = (c.sample_video_descriptions && c.sample_video_descriptions[i]) ? c.sample_video_descriptions[i] : '';
+            return `<li style="margin-bottom:8px;">
+                <span style="color:var(--text);">${t.replace(/</g, '&lt;')}</span>
+                ${desc ? `<div style="margin-top:2px; color:var(--muted);">${desc.replace(/</g, '&lt;')}</div>` : ''}
+            </li>`;
+        }).join('')}</ul>`
         : `<p style="font-size:12px; color:var(--muted); margin:0 0 10px;">No recent video titles on file — run scoring for this channel to pull them.</p>`;
     const scoredHtml = c.ai_verdict ? `
         <div class="reasoning-grid">
@@ -440,7 +482,7 @@ function toggleChannelDetail(btnEl) {
     const html = `
         <div class="channel-detail">
             <p style="font-size:12px; color:var(--muted); margin:0 0 8px;"><b>About:</b> ${(c.channel_description || '').replace(/</g, '&lt;')}</p>
-            <p style="font-size:12px; margin:0 0 4px;"><b>Recent video titles sampled:</b></p>
+            <p style="font-size:12px; margin:0 0 4px;"><b>Recent videos sampled (title + description):</b></p>
             ${titlesHtml}
             ${scoredHtml}
             ${commentHtml}
@@ -471,6 +513,48 @@ function toggleSettingsForm() {
     if (opening) loadSettings();
 }
 
+/**
+ * The actual point of the round/cohort idea: see raw→qualified→pushed
+ * side by side across every niche tested, so which one to go deep on is
+ * a read of a table, not a mental tally kept while flipping through the
+ * round dropdown one at a time.
+ */
+function openCompareRounds() {
+    // Refetch fresh rather than reuse the in-memory `rounds` array — the
+    // dropdown's copy could be stale if this is opened right after an
+    // action elsewhere finished without a round switch to trigger a reload.
+    fetch('../api/youtube_rounds_list.php')
+        .then(r => r.json())
+        .then(res => {
+            const body = document.getElementById('compareRoundsBody');
+            body.innerHTML = (res.rounds || []).map(r => {
+                // "Scored so far" = qualified + rejected — Raw hasn't
+                // been judged yet, so it shouldn't drag down a round's
+                // rate just for having a backlog left to review.
+                const scoredSoFar = r.qualified_count + r.rejected_count;
+                const rate = scoredSoFar > 0 ? Math.round((r.qualified_count / scoredSoFar) * 100) : null;
+                return `
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:8px; font-weight:600;">${r.niche}</td>
+                        <td style="padding:8px; color:var(--muted);">${r.sub_niches.join(', ')}</td>
+                        <td style="padding:8px;">${r.total_channels}</td>
+                        <td style="padding:8px;">${r.raw_count}</td>
+                        <td style="padding:8px; color:var(--accent);">${r.qualified_count}</td>
+                        <td style="padding:8px;">${r.rejected_count}</td>
+                        <td style="padding:8px;">${r.pushed_count}</td>
+                        <td style="padding:8px;">${r.with_email_count}</td>
+                        <td style="padding:8px; font-weight:600;">${rate !== null ? rate + '%' : '—'}</td>
+                    </tr>`;
+            }).join('');
+            document.getElementById('compareRoundsModal').style.display = 'flex';
+        })
+        .catch(err => showToast('Could not load round comparison: ' + err, true));
+}
+
+function closeCompareRounds() {
+    document.getElementById('compareRoundsModal').style.display = 'none';
+}
+
 function loadSettings() {
     fetch('../api/youtube_settings.php')
         .then(r => r.json())
@@ -497,6 +581,7 @@ function saveSettings() {
 function createRound() {
     const niche = document.getElementById('newRoundNiche').value.trim();
     const subNiches = document.getElementById('newRoundSubNiches').value.split(',').map(s => s.trim()).filter(Boolean);
+    const hashtags = document.getElementById('newRoundHashtags').value.split(',').map(s => s.trim()).filter(Boolean);
     const subscriberMin = parseInt(document.getElementById('newRoundSubMin').value, 10) || 1000;
     const maxPerKeyword = parseInt(document.getElementById('newRoundMaxPerKeyword').value, 10) || 50;
 
@@ -507,7 +592,7 @@ function createRound() {
 
     fetch('../api/youtube_create_round.php', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ niche, sub_niches: subNiches, subscriber_min: subscriberMin, max_channels_per_keyword: maxPerKeyword })
+        body: JSON.stringify({ niche, sub_niches: subNiches, hashtags, subscriber_min: subscriberMin, max_channels_per_keyword: maxPerKeyword })
     })
         .then(r => r.json())
         .then(res => {
