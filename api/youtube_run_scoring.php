@@ -71,7 +71,7 @@ if ($channelIds) {
 
 $updateChannelStmt = $pdo->prepare("
     UPDATE youtube_channels
-    SET sample_video_titles = ?, sample_video_descriptions = ?, status = ?, needs_manual_review = ?, reject_reason = ?
+    SET sample_video_titles = ?, sample_video_descriptions = ?, sample_video_urls = ?, status = ?, needs_manual_review = ?, reject_reason = ?
     WHERE id = ?
 ");
 
@@ -115,6 +115,7 @@ foreach ($channels as $i => $channel) {
         $updateChannelStmt->execute([
             json_encode($videos['titles']),
             json_encode($videos['descriptions']),
+            json_encode($videos['urls']),
             $channel['status'], // leave status as-is on a scoring failure
             1,                  // flag for manual review — something needs a human look
             null,
@@ -156,6 +157,7 @@ foreach ($channels as $i => $channel) {
     $updateChannelStmt->execute([
         json_encode($videos['titles']),
         json_encode($videos['descriptions']),
+        json_encode($videos['urls']),
         $newStatus,
         $needsReviewFlag,
         $rejectReason,

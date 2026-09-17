@@ -114,6 +114,8 @@
         <div class="controls">
             <label>Videos sampled per channel</label>
             <input type="number" id="settingVideoSampleCount" style="width:80px;">
+            <label>Comments per video (Comment Insight)</label>
+            <input type="number" id="settingCommentsPerVideo" style="width:80px;">
             <label>Gemini call delay (seconds)</label>
             <input type="number" id="settingDelaySeconds" style="width:80px;">
             <label>Channels scored per run</label>
@@ -404,6 +406,9 @@ function toggleChannelDetail(btnEl) {
 
     const c = row.data();
     const reasoning = c.ai_reasoning || {};
+    const titlesHtml = (c.sample_video_titles && c.sample_video_titles.length)
+        ? `<ul style="font-size:12px; color:var(--muted); margin:0 0 10px; padding-left:18px;">${c.sample_video_titles.map(t => `<li>${t.replace(/</g, '&lt;')}</li>`).join('')}</ul>`
+        : `<p style="font-size:12px; color:var(--muted); margin:0 0 10px;">No recent video titles on file — run scoring for this channel to pull them.</p>`;
     const scoredHtml = c.ai_verdict ? `
         <div class="reasoning-grid">
             <div class="reasoning-item"><b>Audience (${c.audience_score}/20)</b>${reasoning.audience || ''}</div>
@@ -416,10 +421,29 @@ function toggleChannelDetail(btnEl) {
         <p style="font-size:12px; margin:0 0 8px;"><b>Pain / opportunity:</b> ${c.ai_pain_opportunity || '—'}</p>
     ` : '<p style="font-size:12px; color:var(--muted);">Not scored yet — run scoring for this round.</p>';
 
+    // Comment Insight — deliberately styled/positioned as its own
+    // section, separate from the reasoning grid above, since it's a
+    // separate score that never feeds into the main total/grade.
+    const themes = c.comment_recurring_themes || [];
+    const commentHtml = c.buying_intent_score !== null ? `
+        <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border);">
+            <p style="font-size:12px; margin:0 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em;">💬 Comment Insight (separate from the score above, ${c.comments_analyzed} comment(s) analyzed)</p>
+            <div class="reasoning-grid">
+                <div class="reasoning-item"><b>Buying Intent (${c.buying_intent_score}/100)</b></div>
+                <div class="reasoning-item"><b>Pain Point Clarity (${c.pain_point_clarity_score}/100)</b></div>
+            </div>
+            ${themes.length ? `<p style="font-size:12px; margin:8px 0 4px;"><b>Recurring themes:</b> ${themes.join(', ')}</p>` : ''}
+            <p style="font-size:12px; margin:0 0 8px;"><b>Summary:</b> ${c.comment_summary || '—'}</p>
+        </div>
+    ` : '';
+
     const html = `
         <div class="channel-detail">
             <p style="font-size:12px; color:var(--muted); margin:0 0 8px;"><b>About:</b> ${(c.channel_description || '').replace(/</g, '&lt;')}</p>
+            <p style="font-size:12px; margin:0 0 4px;"><b>Recent video titles sampled:</b></p>
+            ${titlesHtml}
             ${scoredHtml}
+            ${commentHtml}
             <p style="font-size:12px; color:var(--muted); margin:0;">
                 <a href="${c.channel_url}" target="_blank">Open channel ↗</a>
                 ${c.website ? ` · <a href="${c.website}" target="_blank">Website ↗</a>` : ''}
@@ -452,6 +476,7 @@ function loadSettings() {
         .then(r => r.json())
         .then(res => {
             document.getElementById('settingVideoSampleCount').value = res.video_sample_count;
+            document.getElementById('settingCommentsPerVideo').value = res.comments_per_video;
             document.getElementById('settingDelaySeconds').value = res.gemini_call_delay_seconds;
             document.getElementById('settingBatchLimit').value = res.scoring_batch_limit;
         });
@@ -460,6 +485,7 @@ function loadSettings() {
 function saveSettings() {
     const body = {
         video_sample_count: parseInt(document.getElementById('settingVideoSampleCount').value, 10),
+        comments_per_video: parseInt(document.getElementById('settingCommentsPerVideo').value, 10),
         gemini_call_delay_seconds: parseInt(document.getElementById('settingDelaySeconds').value, 10),
         scoring_batch_limit: parseInt(document.getElementById('settingBatchLimit').value, 10),
     };
@@ -586,20 +612,25 @@ function updateBulkBar() {
     if (currentTab === 'raw') {
         buttons.innerHTML = `
             <button onclick="bulkRunScoring()">🤖 Score Selected</button>
+            <button class="ghost" onclick="bulkGetCommentInsight()">💬 Get Comment Insight</button>
             <button onclick="bulkSetStatus('qualified')">✅ Qualify Selected</button>
             <button class="ghost" onclick="bulkSetStatus('rejected')">❌ Reject Selected</button>`;
     } else if (currentTab === 'qualified') {
         buttons.innerHTML = `
             <button style="background:#5B7BFF;" onclick="bulkPushToFlozy()">🚀 Push Selected to Flozy</button>
+            <button class="ghost" onclick="bulkRunScoring()">🤖 Score Selected</button>
+            <button class="ghost" onclick="bulkGetCommentInsight()">💬 Get Comment Insight</button>
             <button class="ghost" onclick="bulkSetStatus('raw')">↩️ Reset Selected to Raw</button>`;
     } else if (currentTab === 'rejected') {
         buttons.innerHTML = `<button class="ghost" onclick="bulkSetStatus('raw')">↩️ Reset Selected to Raw</button>`;
     } else if (currentTab === 'all') {
-        // Mixed statuses on this tab — Score Selected is the one action
-        // that's still safe to offer regardless (re-scoring an
-        // already-scored channel just overwrites its score, no harm),
-        // so it's the only bulk button shown here.
-        buttons.innerHTML = `<button onclick="bulkRunScoring()">🤖 Score Selected</button>`;
+        // Mixed statuses on this tab — Score Selected and Get Comment
+        // Insight are both still safe to offer regardless of status
+        // (re-running either just overwrites that channel's own record,
+        // no harm), so those are the only bulk buttons shown here.
+        buttons.innerHTML = `
+            <button onclick="bulkRunScoring()">🤖 Score Selected</button>
+            <button class="ghost" onclick="bulkGetCommentInsight()">💬 Get Comment Insight</button>`;
     } else {
         buttons.innerHTML = ''; // 'pushed' — nothing left to do
     }
@@ -630,6 +661,36 @@ function bulkRunScoring() {
             loadRounds(currentRoundId);
         })
         .catch(err => { document.getElementById('jobStatus').textContent = ''; showToast('Scoring failed: ' + err, true); });
+}
+
+/**
+ * Comment Insight — additive only, never touches the main score. Reuses
+ * whichever videos scoring already sampled (channel.sample_video_urls),
+ * so a channel needs to have been scored at least once first; channels
+ * without a video sample yet are silently skipped and counted in
+ * skipped_no_videos rather than erroring.
+ */
+function bulkGetCommentInsight() {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    document.getElementById('jobStatus').textContent = `Analyzing comments for ${ids.length} selected channel(s) — paced to avoid the shared Gemini rate limit…`;
+    fetch('../api/youtube_run_comment_insight.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel_ids: ids })
+    })
+        .then(r => r.json())
+        .then(res => {
+            document.getElementById('jobStatus').textContent = '';
+            if (!res.success) { showToast(res.error || 'Comment Insight failed.', true); return; }
+            let msg = `Analyzed ${res.analyzed} of ${ids.length} selected.`;
+            if (res.skipped_no_videos) msg += ` ${res.skipped_no_videos} skipped (not scored yet — run scoring first).`;
+            if (res.skipped_no_comments) msg += ` ${res.skipped_no_comments} had no comments returned.`;
+            if (res.stopped_early) msg += ' ' + res.stop_reason;
+            showToast(msg);
+            clearSelection();
+            loadRounds(currentRoundId);
+        })
+        .catch(err => { document.getElementById('jobStatus').textContent = ''; showToast('Comment Insight failed: ' + err, true); });
 }
 
 function bulkSetStatus(status) {

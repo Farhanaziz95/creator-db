@@ -133,11 +133,13 @@ function youtube_fetch_channel_detail(PDO $pdo, string $channelUrl, ?array $pref
  * role as Instagram's Comment Scraper only hitting top-K posts).
  * $count comes from the live-editable youtube_settings.video_sample_count
  * — never hardcode it here.
- * Returns: ['titles' => array, 'descriptions' => array]
+ * Returns: ['titles' => array, 'descriptions' => array, 'urls' => array]
+ * `urls` is stored on the channel row (sample_video_urls) so Comment
+ * Insight can reuse this exact sample instead of re-running this stage.
  */
 function youtube_fetch_recent_videos(PDO $pdo, string $channelUrl, int $count, ?array $preferredKeyIds, string $actorSlug): array
 {
-    $empty = ['titles' => [], 'descriptions' => []];
+    $empty = ['titles' => [], 'descriptions' => [], 'urls' => []];
     if ($count <= 0) {
         return $empty;
     }
@@ -165,12 +167,14 @@ function youtube_fetch_recent_videos(PDO $pdo, string $channelUrl, int $count, ?
 
     $titles = [];
     $descriptions = [];
+    $urls = [];
     foreach ($results as $r) {
         if (!empty($r['title'])) $titles[] = $r['title'];
         if (!empty($r['text'])) $descriptions[] = $r['text'];
+        if (!empty($r['url'])) $urls[] = $r['url'];
     }
 
-    return ['titles' => $titles, 'descriptions' => $descriptions];
+    return ['titles' => $titles, 'descriptions' => $descriptions, 'urls' => $urls];
 }
 
 /**
@@ -204,4 +208,55 @@ function youtube_extract_socials(array $descriptionLinks): array
         if ($url) $socials[] = $url;
     }
     return $socials;
+}
+
+/**
+ * Stage 4 — Comment Insight input (additive, optional; only ever called
+ * from the explicit "Get Comment Insight" action, never automatically).
+ * SEPARATE actor from the one used everywhere above — the main scraper
+ * has no comment-scraping capability at all — but same "Maintained by
+ * Apify" standard confirmed on its own store page.
+ *
+ * $videoUrls is the SAME sample Stage 3 already pulled for scoring
+ * (stored on the channel row as sample_video_urls) — reused here rather
+ * than re-scraping a fresh video list, so this stage doesn't need its
+ * own video-count setting, only its own comments_per_video.
+ *
+ * NOTE: this actor's own docs don't document a sort-order input, unlike
+ * some competing comment scrapers — comments come back in whatever
+ * default order the actor returns, not a guaranteed "Top comments"
+ * order. Worth checking a real run's actual order before relying on it.
+ */
+function youtube_fetch_comments(PDO $pdo, array $videoUrls, int $perVideo, ?array $preferredKeyIds, string $actorSlug): array
+{
+    if (!$videoUrls || $perVideo <= 0) {
+        return [];
+    }
+
+    $estimatedCost = estimate_apify_cost($pdo, 'youtube_comments_scraper', count($videoUrls) * $perVideo);
+    $key = pick_apify_key($pdo, $estimatedCost, $preferredKeyIds);
+    if (!$key) {
+        return [];
+    }
+
+    $startUrls = array_map(fn($u) => ['url' => $u, 'method' => 'GET'], $videoUrls);
+
+    $results = run_apify_actor($actorSlug, [
+        'startUrls'   => $startUrls,
+        'maxComments' => $perVideo,
+    ], $key['api_key']);
+
+    if (!$results) {
+        return [];
+    }
+
+    log_apify_usage($pdo, $key['id'], 'youtube_comments_scraper', count($results), $estimatedCost, null);
+
+    $comments = [];
+    foreach ($results as $r) {
+        $text = $r['comment'] ?? '';
+        if ($text) $comments[] = $text;
+    }
+
+    return $comments;
 }
