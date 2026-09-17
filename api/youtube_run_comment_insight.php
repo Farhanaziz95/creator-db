@@ -3,10 +3,12 @@
  * YouTube pipeline, Layer 4 (additive): "Get Comment Insight" — a
  * separate, optional, explicitly-triggered action. Never writes to
  * youtube_channels' status or youtube_scores — only to its own
- * youtube_comment_insights table. Reuses whichever videos Stage 3
- * already sampled for scoring (channel.sample_video_urls) instead of
- * re-scraping or needing its own video-count setting — only
- * comments_per_video is new.
+ * youtube_comment_insights table. Prefers reusing whichever videos
+ * Stage 3 already sampled for scoring (channel.sample_video_urls); if
+ * that's empty (channel was scored before this column existed, or
+ * scoring genuinely found nothing), fetches a fresh sample on the spot
+ * rather than requiring a full re-score just to backfill a URL list —
+ * see the fallback below. Only comments_per_video is a new setting.
  */
 set_time_limit(0);
 ignore_user_abort(true);
@@ -34,8 +36,10 @@ if (!$channelId && !$channelIds) {
 
 $youtubeConfig = require __DIR__ . '/../config/youtube.php';
 $commentsActorSlug = $youtubeConfig['youtube_comments_actor'];
+$scraperActorSlug = $youtubeConfig['youtube_scraper_actor'];
 
-$settings = $pdo->query("SELECT comments_per_video, gemini_call_delay_seconds FROM youtube_settings WHERE id = 1")->fetch();
+$settings = $pdo->query("SELECT video_sample_count, comments_per_video, gemini_call_delay_seconds FROM youtube_settings WHERE id = 1")->fetch();
+$videoSampleCount = $settings ? (int) $settings['video_sample_count'] : 5;
 $commentsPerVideo = $settings ? (int) $settings['comments_per_video'] : 15;
 $callDelaySeconds = $settings ? (int) $settings['gemini_call_delay_seconds'] : 4;
 
@@ -78,9 +82,27 @@ foreach ($channels as $i => $channel) {
     }
 
     $videoUrls = $channel['sample_video_urls'] ? json_decode($channel['sample_video_urls'], true) : [];
+
     if (!$videoUrls) {
-        // Hasn't been scored yet (or scoring found no videos) — nothing
-        // for this stage to reuse. Run scoring first.
+        // Scored before this feature existed (sample_video_urls wasn't
+        // being saved yet), or scoring genuinely found no videos —
+        // fetch a fresh video sample on the spot rather than requiring
+        // a full re-score just to backfill a URL list. This does NOT
+        // touch the channel's existing score/status — it only calls the
+        // same Stage 3 scrape scoring already uses, then saves the URLs
+        // for next time.
+        $videos = youtube_fetch_recent_videos($pdo, $channel['channel_url'], $videoSampleCount, $preferredKeyIds, $scraperActorSlug);
+        $videoUrls = $videos['urls'];
+
+        if ($videoUrls) {
+            $stmt = $pdo->prepare("UPDATE youtube_channels SET sample_video_urls = ? WHERE id = ?");
+            $stmt->execute([json_encode($videoUrls), $channel['id']]);
+        }
+    }
+
+    if (!$videoUrls) {
+        // Even a fresh fetch came back empty — this channel genuinely
+        // has no videos to pull comments from.
         $skippedNoVideos++;
         continue;
     }
