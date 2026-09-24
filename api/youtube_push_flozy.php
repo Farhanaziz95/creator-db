@@ -24,11 +24,15 @@ if ($action === 'selected') {
     $channelIds = array_map('intval', $input['channel_ids'] ?? []);
     $pushed = 0;
     $failed = [];
+    $crossPlatformWarnings = [];
 
     foreach ($channelIds as $id) {
         $result = push_channel_to_flozy($pdo, $id);
         if ($result['success']) {
             $pushed++;
+            if (!empty($result['cross_platform_warning'])) {
+                $crossPlatformWarnings[] = ['channel_id' => $id, 'warning' => $result['cross_platform_warning']];
+            }
         } else {
             $failed[] = ['channel_id' => $id, 'error' => $result['error']];
         }
@@ -40,6 +44,7 @@ if ($action === 'selected') {
         'pushed'          => $pushed,
         'total_attempted' => count($channelIds),
         'failed'          => $failed,
+        'cross_platform_warnings' => $crossPlatformWarnings,
     ]);
     exit;
 }

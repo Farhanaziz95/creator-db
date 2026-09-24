@@ -50,6 +50,28 @@ function push_channel_to_flozy(PDO $pdo, int $channelId): array
         return ['success' => false, 'error' => 'Channel not found'];
     }
 
+    // Cross-platform contact dedup (lightweight — warns, never blocks
+    // the push). Mirrors the same check Instagram's push_profile_to_flozy()
+    // runs in reverse: checks whether either of this channel's emails
+    // already belongs to an Instagram profile that's already been
+    // pushed to Flozy.
+    $crossPlatformWarning = null;
+    $checkEmails = array_filter([$channel['business_email'], $channel['email']]);
+    if ($checkEmails) {
+        $placeholders = implode(',', array_fill(0, count($checkEmails), '?'));
+        $stmt = $pdo->prepare("
+            SELECT p.username FROM profiles p
+            JOIN flozy_leads fl ON fl.profile_id = p.id
+            WHERE p.email IN ($placeholders)
+            LIMIT 1
+        ");
+        $stmt->execute(array_values($checkEmails));
+        $match = $stmt->fetchColumn();
+        if ($match) {
+            $crossPlatformWarning = "This email is already linked to Instagram lead @{$match}, already pushed to Flozy — check for a duplicate Lead before treating this as a brand-new contact.";
+        }
+    }
+
     $config = require __DIR__ . '/../config/flozy.php';
 
     $title = ($channel['channel_name'] ?: $channel['channel_username'] ?: 'YouTube channel') . ' (YouTube)';
@@ -181,5 +203,6 @@ function push_channel_to_flozy(PDO $pdo, int $channelId): array
         'contact_error'      => $contactError,
         'opportunity_error'  => $opportunityError,
         'task_errors'        => $taskErrors,
+        'cross_platform_warning' => $crossPlatformWarning, // null unless the same email is already a pushed Instagram lead
     ];
 }

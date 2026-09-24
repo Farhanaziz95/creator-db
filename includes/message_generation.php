@@ -79,15 +79,16 @@ function get_message_angle(PDO $pdo, int $profileId): ?string
  * from Settings (followup_regular, followup_validation_script,
  * followup_free_value, followup_win_insight, followup_custom_survey).
  */
-function generate_followup_message(PDO $pdo, string $type, string $transcriptsBlob, ?string $messageAngle, ?string $userInput): array
+function generate_followup_message(PDO $pdo, string $type, string $transcriptsBlob, ?string $messageAngle, ?string $userInput, array $previousMessages = []): array
 {
     $validTypes = ['regular', 'validation_script', 'free_value', 'win_insight', 'custom_survey'];
     $templateKey = 'followup_' . (in_array($type, $validTypes, true) ? $type : 'regular');
 
     $prompt = render_prompt_template($pdo, $templateKey, [
-        'transcripts'            => $transcriptsBlob,
-        'user_input'             => $userInput ?? '',
-        'message_angle_context'  => format_message_angle_context($messageAngle),
+        'transcripts'                 => $transcriptsBlob,
+        'user_input'                  => $userInput ?? '',
+        'message_angle_context'       => format_message_angle_context($messageAngle),
+        'previous_followups_context'  => format_previous_followups_context($previousMessages),
     ]);
 
     return call_gemini($prompt, 250);

@@ -31,6 +31,200 @@ This clears the AI queue automatically every few minutes.
    - Add arguments: `C:\xampp\htdocs\creator-db\jobs\process_niche_queue.php`
 4. Save. It'll now run quietly in the background, pulling ~10 profiles per run through the free OpenRouter models (keyword-matched profiles never touch this — only the leftovers with no business category and no keyword match).
 
+# Bug fix: Follow-up generation fixated on the same angle every time
+
+Reported: "no matter how many times I attempt a follow-up on the same
+lead, it uses the same angle and same topic" — regardless of which of
+the 5 follow-up types was picked.
+
+**Real cause, not a misunderstanding**: every follow-up template fed the
+AI the exact same stored `{transcripts}` and the exact same static
+per-niche `{message_angle_context}` on every single call, with **nothing
+telling it what had already been sent**. Combined with a narrow
+instruction ("reference something specific and real from their
+content"), the AI reliably locked onto the same most-salient detail
+every time.
+
+**Fix** (`sql/migration_034_followup_history_fix.sql`): a new
+`{previous_followups_context}` placeholder, populated from this lead's
+`followup_messages` history, explicitly instructing the AI not to repeat
+any previously-sent angle or topic. Empty (no visible prompt change) on
+a lead's first follow-up. The migration uses `REPLACE()` rather than
+overwriting `template_text` outright, since these 5 templates are
+user-editable in Settings — a raw overwrite would have silently
+destroyed any wording already customized there.
+
+If a template's text has been edited enough that it no longer contains
+the literal `{message_angle_context}` token, this migration is a no-op
+for that row — check it manually in Settings after running.
+
+# YouTube Pipeline
+
+A second, fully parallel pipeline alongside the Instagram one above — same
+project, same database, same shared Flozy destination, but its own
+tables, its own scoring, and its own dashboard. Built because Instagram
+and YouTube creators genuinely don't fit the same schema (subscribers vs.
+followers, views/sub ratio vs. engagement %, no bio-email-regex
+equivalent needed since YouTube's About text works the same way anyway)
+— rather than retrofit the mature, working Instagram pipeline to handle
+a second platform badly, this is a clean second build that only touches
+Instagram's tables at the very last step (the Flozy push, and even
+that's its own bridge table, `youtube_flozy_leads`, not a shared one).
+
+## Setup
+1. Run migrations **028 through 033** (in that order) in phpMyAdmin —
+   they're additive on top of `schema.sql`, same as every other
+   numbered migration in this project.
+2. Reuses the **same Apify keys** already configured for Instagram
+   (`apify_keys` table was never Instagram-specific) and the **same
+   Gemini key** (`config/gemini.php`) — nothing new to configure there,
+   but see the shared-quota note under Settings below.
+3. Visit `public/youtube.php` (linked from the Instagram dashboard as
+   "▶️ YouTube Pipeline").
+
+## The pipeline, end to end
+```
+Create a Round (niche + sub-niche keywords, optional hashtags)
+    → Run Discovery (Apify: keyword search + optional hashtag search
+      → channel detail → subscriber filter → email regex)
+    → Run Scoring (Apify: sample recent videos → Gemini: 5-bucket score
+      + verdict) — batched/paced to protect the shared Gemini quota
+    → manual Qualify / Reject / Reset (AI's verdict is a first pass,
+      not gospel)
+    → (optional, additive) Get Comment Insight — Buying Intent + Pain
+      Point Clarity, its own separate score, never touches the 5-bucket
+      total
+    → Push to Flozy (Lead + Contact + Opportunity + tasks, one call —
+      email's already known at scrape time so there's no separate
+      "Push Contact" catch-up step the way Instagram needed one)
+```
+
+## A round = one niche experiment
+Confirmed design choice: **the round itself IS the niche label** — no
+separate niche taxonomy table. You pick a niche and its sub-niche search
+keywords when you create the round; every channel that round pulls in is
+definitionally that niche because that's what was searched for. Compare
+rounds side by side (📊 "Compare Rounds" button) to see which niche
+actually yields reachable, engaged, under-monetized creators — the
+original point of building rounds as a concept at all.
+
+## Schema (all in `migration_028` through `migration_033`)
+- **`youtube_rounds`** — niche, sub_niches (JSON keywords), hashtags
+  (JSON, optional), subscriber_min, max_channels_per_keyword, status.
+- **`youtube_channels`** — one row per discovered channel: identity
+  fields (channel_url, youtube_channel_id, channel_username,
+  channel_name), numbers (subscribers, total_videos, total_views,
+  is_verified), `email` (regex-extracted from the About text, same
+  function Instagram's bio-email extraction uses) + `business_email`
+  (always manually entered — YouTube's protected business-inquiries
+  address isn't scrapeable at all, and is treated as PRIMARY over
+  `email` wherever only one can be used, i.e. the Flozy push), website,
+  social_links, sample_video_titles/descriptions/urls (JSON, populated
+  by scoring's Stage 3, reused by Comment Insight), status
+  (raw/qualified/rejected/pushed), needs_manual_review, reject_reason.
+- **`youtube_scores`** — the 5-bucket AI score (see below), total,
+  grade (A/B/C/D — same 90/75/60 cutoffs as Instagram's quality score),
+  ai_reasoning (JSON, one sentence per bucket), ai_product_potential,
+  ai_pain_opportunity, ai_verdict.
+- **`youtube_comment_insights`** — entirely separate table: Buying
+  Intent (0-100), Pain Point Clarity (0-100), recurring_themes (JSON),
+  summary. Never joined into or overwriting `youtube_scores`.
+- **`youtube_flozy_leads`** — same shape as Instagram's `flozy_leads`,
+  kept as its own table on purpose so nothing about the proven
+  Instagram push path is ever touched.
+- **`youtube_settings`** — single-row, live-editable (see below).
+
+## The 5-bucket AI score (100 points, `includes/youtube_scoring.php`)
+| Bucket | Points | Judges |
+|---|---|---|
+| Audience Fit | 20 | Subscriber count in a genuinely reachable range — bigger isn't automatically better |
+| Engagement | 20 | Views/subscriber ratio and signs of a live, responsive audience |
+| Monetization Gap | 25 (heaviest) | No visible product/course/coaching = high score (that's the opportunity); an obviously fully-monetized business = low score |
+| Content Quality | 15 | Teaches something repeatable, consistent expertise |
+| Opportunity Clarity | 20 | Can the AI name ONE specific, concrete gap — vague answers score low |
+
+**Deliberate simplification, not in the original plan:** there's no
+separate keyword-based auto-reject pre-filter (corporate/news/celebrity)
+— one Gemini call does scoring AND the qualify/reject/needs_review
+verdict together, since the AI has full context to judge "is this
+obviously a media company" more reliably than a brittle string-match
+list would. Revisit if the AI's reject calls stop holding up.
+
+**No monetization field exists in the scraper's own output** — confirmed
+from a real raw sample. An earlier guess (`isMonetized`) never existed
+and always came back null; fixed in migration_029 (replaced with the
+real `isChannelVerified` field). The Monetization Gap bucket above is
+judged entirely by the AI from description + video content, with no
+YouTube-provided signal to cross-check it against — a softer signal than
+Audience/Engagement, which are real numbers.
+
+## Comment Insight (`includes/youtube_comment_insight.php`) — additive only
+Its own Gemini prompt, its own storage, its own "💬 Get Comment Insight"
+action (single or bulk, same range-select workflow as scoring). Reuses
+whichever videos scoring already sampled (`sample_video_urls`); if that's
+empty (channel was scored before this feature existed), it fetches a
+fresh sample on the spot rather than requiring a full re-score. **Open
+question, not yet verified with real usage:** the comment actor's own
+docs don't document a sort-order input — comments come back in whatever
+default order the actor returns, not a confirmed "Top comments" order.
+
+## Apify actors used (all confirmed "Maintained by Apify" on their own
+store pages, per your explicit no-third-party-actor rule)
+| Actor | Used for | Confirmed cost |
+|---|---|---|
+| `streamers/youtube-scraper` | Discovery, channel detail, video sampling, and single-video resolution for hashtag discovery | $5.00/1,000 results |
+| `streamers/youtube-comments-scraper` | Comment Insight | $0.90/1,000 comments |
+| `apify/social-media-hashtag-research` | Optional hashtag discovery — genuinely published under Apify's own org, restricted to `socials: ["youtube"]` | Wrapper is free; triggers `streamers/youtube-video-scraper-by-hashtag` underneath at $2.00/1,000 (confirmed from the wrapper's own FAQ) |
+
+**One unverified assumption, flagged where it's used** (`includes/youtube_scrape.php`):
+the hashtag actor's `socials` input field is assumed to accept the string
+`"youtube"` — matches the output's own `fromSocial: "youtube"` field, but
+the input schema page never spelled out its accepted enum values
+explicitly. First thing to check if a hashtag-only round comes back empty.
+
+## Settings (all live-editable, `public/youtube.php` → ⚙️ Settings — never hardcoded)
+- **`video_sample_count`** (default 5) — recent videos pulled per channel for scoring's content-quality judgment.
+- **`comments_per_video`** (default 15) — comments pulled per video for Comment Insight.
+- **`gemini_call_delay_seconds`** (default 4) — pacing between every Gemini call. **Important:** this key is SHARED with Instagram's Verify+Personalize/Retry AI Only — a careless batch here can block Instagram's AI features for the rest of the day too, not just YouTube's. This is why it exists.
+- **`scoring_batch_limit`** (default 10) — channels processed per *automatic* round-wide scoring run; re-run to continue where it left off. **Explicit selections (shift-click range-select → "Score Selected") deliberately bypass this cap** — you picked exactly what you want scored, so it isn't second-guessed.
+
+## Apify budget, visible on both dashboards
+Since both pipelines draw from the same key pool, the remaining budget
+is shown on the YouTube dashboard too now (`api/apify_budget.php`,
+lightweight/read-only — no sweep logic, that stays Instagram-specific),
+refreshing automatically after Discovery, Scoring, or Comment Insight
+runs, since those are what actually spend it. Instagram's own Budget
+Sweep panel still does everything it always did — the underlying
+total-remaining-budget function just moved into `includes/apify_client.php`
+so both places call the same code instead of drifting apart.
+
+## Known open items (not bugs — just not yet proven with real usage)
+1. Hashtag discovery's `socials` input value (see above).
+2. Comment sort order (see above).
+3. Full round-scale test (6 niches × 30-50 creators, per the original doc's Round 1 plan) hasn't happened yet — everything's been validated on smaller test rounds so far.
+
+## Cross-platform contact dedup (lightweight — warns, never blocks)
+Since the two pipelines never shared a "person" table, email is the only
+signal available to notice the same real-world contact showing up from
+both platforms. Before either pipeline's Flozy push completes, it checks
+the OTHER pipeline's already-pushed leads for a matching email
+(YouTube's `email`/`business_email` vs. Instagram's `profiles.email`).
+If found, the push still goes through — this is a warning surfaced in
+the toast (single push) or console (bulk push), not a block, since you
+may genuinely want both platforms tracked as separate leads. See
+`includes/flozy_client.php`'s `push_profile_to_flozy()` and
+`includes/youtube_flozy.php`'s `push_channel_to_flozy()` for the two
+directions of the check.
+
+## Rejection Audit (`api/youtube_rejected_audit.php`)
+A "📋 Rejection Audit" button on the YouTube dashboard, deliberately
+**cross-round** (not scoped to whichever round the dropdown happens to
+show) — the actual point is spotting whether the AI's reject calls hold
+up consistently across niches, not just within one. Filterable to
+AI-rejected vs. manually-rejected only. No new table — reads straight
+off `youtube_channels.reject_reason`, distinguishing the two sources by
+the stored string's prefix (`'AI: ...'` vs `'Manually rejected...'`).
+
 ## Round 35: Big batch — complete
 
 This round covered a large agreed scope (12 items from one conversation).

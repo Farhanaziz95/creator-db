@@ -349,6 +349,26 @@ function push_profile_to_flozy(PDO $pdo, int $profileId): array
         return ['success' => false, 'error' => 'Profile not found'];
     }
 
+    // Cross-platform contact dedup (lightweight — warns, never blocks
+    // the push). The two pipelines don't share a "person" table, so
+    // email is the only identity signal available across them. Checks
+    // whether this same email already belongs to a YouTube channel
+    // that's already been pushed to Flozy.
+    $crossPlatformWarning = null;
+    if ($profile['email']) {
+        $stmt = $pdo->prepare("
+            SELECT yc.channel_name FROM youtube_channels yc
+            JOIN youtube_flozy_leads yfl ON yfl.channel_id = yc.id
+            WHERE yc.email = ? OR yc.business_email = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$profile['email'], $profile['email']]);
+        $match = $stmt->fetchColumn();
+        if ($match) {
+            $crossPlatformWarning = "This email is already linked to YouTube channel \"{$match}\", already pushed to Flozy — check for a duplicate Lead before treating this as a brand-new contact.";
+        }
+    }
+
     $config = require __DIR__ . '/../config/flozy.php';
 
     $title = '@' . $profile['username'] . ' | ' . ($profile['full_name'] ?: $profile['username']);
@@ -452,5 +472,6 @@ function push_profile_to_flozy(PDO $pdo, int $profileId): array
         'task_errors'      => $taskErrors, // lead push still counts as success even if a task or two failed
         'opportunity_error' => $opportunityError, // null if the Opportunity was created fine
         'contact_error'    => $contactError, // null if contact push succeeded, was skipped, or no email known yet
+        'cross_platform_warning' => $crossPlatformWarning, // null unless the same email is already a pushed YouTube lead
     ];
 }

@@ -75,8 +75,11 @@
 <body>
 
 <h1>🎬 YouTube Pipeline</h1>
-<p style="color: var(--muted); font-size: 13px; margin: 0 0 20px;">
+<p style="color: var(--muted); font-size: 13px; margin: 0 0 8px;">
     <a href="index.php">← Instagram dashboard</a> — separate pipeline, shared destination: Flozy.
+</p>
+<p style="color: var(--muted); font-size: 13px; margin: 0 0 20px;">
+    💰 Apify budget remaining (shared with Instagram — both pipelines draw from the same key pool): <span id="apifyBudgetDisplay">checking…</span>
 </p>
 
 <div id="toast"></div>
@@ -89,6 +92,7 @@
         <button class="ghost" onclick="toggleNewRoundForm()">+ New Round</button>
         <button class="ghost" onclick="toggleSettingsForm()">⚙️ Settings</button>
         <button class="ghost" onclick="openCompareRounds()">📊 Compare Rounds</button>
+        <button class="ghost" onclick="openRejectedAudit()">📋 Rejection Audit</button>
     </div>
 
     <div id="newRoundForm" style="display:none; margin-top:16px; padding-top:16px; border-top:1px solid var(--border);">
@@ -158,6 +162,40 @@
         <p style="font-size:12px; color:var(--muted); margin-top:14px;">
             Qualify Rate = Qualified ÷ Total scored so far (Raw channels not yet scored aren't counted against a round — a round with a lot left in Raw isn't necessarily worse, just earlier in review).
         </p>
+    </div>
+</div>
+
+<!-- Rejection Audit modal — cross-round on purpose, so you can spot
+     whether the AI's reject calls hold up consistently across niches,
+     not just within whichever round happens to be selected. -->
+<div id="rejectedAuditModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:1000px; width:92%; max-height:85vh; overflow-y:auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <h2 style="margin:0; font-size:16px;">📋 Rejection Audit — every rejected channel, every round</h2>
+            <button class="ghost small" onclick="closeRejectedAudit()">✕ Close</button>
+        </div>
+        <div class="controls" style="margin-bottom:12px;">
+            <label>Filter</label>
+            <select id="rejectedAuditFilter" onchange="renderRejectedAudit()">
+                <option value="all">All</option>
+                <option value="AI">AI-rejected only</option>
+                <option value="Manual">Manually rejected only</option>
+            </select>
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+                <tr style="text-align:left; color:var(--muted); border-bottom:1px solid var(--border);">
+                    <th style="padding:8px;">Channel</th>
+                    <th style="padding:8px;">Niche</th>
+                    <th style="padding:8px;">Subs</th>
+                    <th style="padding:8px;">Score</th>
+                    <th style="padding:8px;">Rejected By</th>
+                    <th style="padding:8px;">Reason</th>
+                </tr>
+            </thead>
+            <tbody id="rejectedAuditBody"></tbody>
+        </table>
+        <p id="rejectedAuditEmpty" style="color:var(--muted); font-size:13px; display:none;">No rejections match this filter.</p>
     </div>
 </div>
 
@@ -555,6 +593,50 @@ function closeCompareRounds() {
     document.getElementById('compareRoundsModal').style.display = 'none';
 }
 
+let allRejections = []; // held in memory so the filter dropdown re-renders without refetching
+
+/**
+ * Cross-round on purpose (see the modal's own comment) — fetches every
+ * rejected channel regardless of which round the main dashboard is
+ * currently showing.
+ */
+function openRejectedAudit() {
+    fetch('../api/youtube_rejected_audit.php')
+        .then(r => r.json())
+        .then(res => {
+            allRejections = res.rejections || [];
+            renderRejectedAudit();
+            document.getElementById('rejectedAuditModal').style.display = 'flex';
+        })
+        .catch(err => showToast('Could not load rejection audit: ' + err, true));
+}
+
+function renderRejectedAudit() {
+    const filter = document.getElementById('rejectedAuditFilter').value;
+    const filtered = filter === 'all' ? allRejections : allRejections.filter(r => r.rejected_by === filter);
+
+    const body = document.getElementById('rejectedAuditBody');
+    document.getElementById('rejectedAuditEmpty').style.display = filtered.length ? 'none' : 'block';
+
+    body.innerHTML = filtered.map(r => {
+        const scoreLabel = r.total_score !== null ? `${r.total_score}/100${r.grade ? ' ' + r.grade : ''}` : '—';
+        const byColor = r.rejected_by === 'AI' ? 'var(--danger)' : 'var(--muted)';
+        return `
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:8px;"><a href="${r.channel_url}" target="_blank">${r.channel_name || r.channel_username || '(unnamed)'}</a></td>
+                <td style="padding:8px; color:var(--muted);">${r.niche}</td>
+                <td style="padding:8px;">${r.subscribers !== null ? Number(r.subscribers).toLocaleString() : '—'}</td>
+                <td style="padding:8px;">${scoreLabel}</td>
+                <td style="padding:8px; color:${byColor}; font-weight:600;">${r.rejected_by}</td>
+                <td style="padding:8px; color:var(--muted);">${(r.reject_reason || '').replace(/</g, '&lt;')}</td>
+            </tr>`;
+    }).join('');
+}
+
+function closeRejectedAudit() {
+    document.getElementById('rejectedAuditModal').style.display = 'none';
+}
+
 function loadSettings() {
     fetch('../api/youtube_settings.php')
         .then(r => r.json())
@@ -633,6 +715,7 @@ function pushOneToFlozy(channelId) {
             let msg = 'Pushed to Flozy.';
             if (res.contact_error) msg += ` Contact issue: ${res.contact_error}`;
             if (res.opportunity_error) msg += ` Opportunity issue: ${res.opportunity_error}`;
+            if (res.cross_platform_warning) msg += ` ⚠️ ${res.cross_platform_warning}`;
             showToast(msg);
             loadRounds(currentRoundId);
         })
@@ -744,6 +827,7 @@ function bulkRunScoring() {
             showToast(msg);
             clearSelection();
             loadRounds(currentRoundId);
+            loadApifyBudget(); // this action spends Apify credits
         })
         .catch(err => { document.getElementById('jobStatus').textContent = ''; showToast('Scoring failed: ' + err, true); });
 }
@@ -774,6 +858,7 @@ function bulkGetCommentInsight() {
             showToast(msg);
             clearSelection();
             loadRounds(currentRoundId);
+            loadApifyBudget(); // this action spends Apify credits
         })
         .catch(err => { document.getElementById('jobStatus').textContent = ''; showToast('Comment Insight failed: ' + err, true); });
 }
@@ -804,6 +889,10 @@ function bulkPushToFlozy() {
         .then(res => {
             showToast(`Pushed ${res.pushed} of ${res.total_attempted}.${res.failed.length ? ' Some failed — see console.' : ''}`);
             if (res.failed.length) console.warn(res.failed);
+            if (res.cross_platform_warnings && res.cross_platform_warnings.length) {
+                showToast(`⚠️ ${res.cross_platform_warnings.length} email(s) already linked to a pushed Instagram lead — see console.`, true);
+                console.warn(res.cross_platform_warnings);
+            }
             clearSelection();
             loadRounds(currentRoundId);
         })
@@ -828,6 +917,7 @@ function runDiscovery() {
             if (!res.success) { showToast(res.error || 'Discovery failed.', true); return; }
             showToast(`Discovery done — ${res.saved} channel(s) saved (${res.below_subscriber_floor} below subscriber floor, ${res.detail_failed} failed).`);
             loadRounds(currentRoundId);
+            loadApifyBudget(); // this action spends Apify credits
         })
         .catch(err => { document.getElementById('jobStatus').textContent = ''; showToast('Discovery failed: ' + err, true); });
 }
@@ -848,8 +938,24 @@ function runScoring() {
             else if (res.note) msg += ' ' + res.note;
             showToast(msg);
             loadRounds(currentRoundId);
+            loadApifyBudget(); // this action spends Apify credits
         })
         .catch(err => { document.getElementById('jobStatus').textContent = ''; showToast('Scoring failed: ' + err, true); });
+}
+
+/**
+ * Shared Apify key pool with Instagram — checking it here means never
+ * having to tab over just to see the number. Read-only, no sweep logic
+ * (that's Instagram-specific and lives on its own dashboard).
+ */
+function loadApifyBudget() {
+    fetch('../api/apify_budget.php')
+        .then(r => r.json())
+        .then(res => {
+            const el = document.getElementById('apifyBudgetDisplay');
+            el.textContent = res.remaining_budget !== null ? `$${res.remaining_budget.toFixed(2)}` : 'unknown (check Apify console)';
+        })
+        .catch(() => { document.getElementById('apifyBudgetDisplay').textContent = 'unavailable'; });
 }
 
 /**
@@ -859,6 +965,7 @@ function runScoring() {
  */
 initTable();
 loadRounds();
+loadApifyBudget();
 </script>
 </body>
 </html>

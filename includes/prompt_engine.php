@@ -52,3 +52,28 @@ function format_message_angle_context(?string $angle): string
 {
     return $angle ? "\n\nThis creator's category suggests a specific angle for what they actually care about: {$angle}\n" : '';
 }
+
+/**
+ * Fixes a real bug: without this, every follow-up call to a given lead
+ * got the exact same {message_angle_context} and the exact same
+ * {transcripts} every single time, with nothing telling the AI what was
+ * already sent — so it reliably converged on the same angle/topic no
+ * matter how many follow-ups you generated. $previousMessages is this
+ * lead's prior followup_messages rows (generated_message + followup_type
+ * + created_at), oldest first; empty array on a lead's first follow-up
+ * degrades gracefully to an empty string, same pattern as
+ * format_message_angle_context() above.
+ */
+function format_previous_followups_context(array $previousMessages): string
+{
+    if (!$previousMessages) {
+        return '';
+    }
+
+    $lines = [];
+    foreach ($previousMessages as $i => $m) {
+        $lines[] = ($i + 1) . ". (" . $m['followup_type'] . ") " . $m['generated_message'];
+    }
+
+    return "\n\nPREVIOUSLY SENT to this same creator — do NOT repeat these angles, topics, or specific details. Take a genuinely different angle this time:\n" . implode("\n", $lines) . "\n";
+}

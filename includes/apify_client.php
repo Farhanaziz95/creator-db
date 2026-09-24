@@ -156,3 +156,29 @@ function run_apify_actor(string $actorSlug, array $input, string $apiKey, int $t
     $decoded = json_decode($response, true);
     return is_array($decoded) ? $decoded : null;
 }
+
+/**
+ * Sums remaining budget across every active Apify key. Moved here from
+ * api/budget_sweep.php so both Instagram (the Budget Sweep panel) and
+ * YouTube (a lightweight read-only display) can call the same
+ * function — this key pool is shared between both pipelines, so
+ * checking it shouldn't mean switching dashboards to see the number.
+ * Returns null only if every key's balance was unknown/inconclusive,
+ * never as a stand-in for zero.
+ */
+function get_total_remaining_budget(PDO $pdo): ?float
+{
+    $keys = get_active_apify_keys($pdo);
+    $total = 0.0;
+    $anyKnown = false;
+
+    foreach ($keys as $key) {
+        $budget = check_apify_key_budget($key['api_key']);
+        if ($budget['remaining_usd'] !== null) {
+            $total += $budget['remaining_usd'];
+            $anyKnown = true;
+        }
+    }
+
+    return $anyKnown ? $total : null;
+}

@@ -54,7 +54,21 @@ function handle_followup_generation(PDO $pdo): void
 
     $messageAngle = get_message_angle($pdo, $profileId);
 
-    $result = generate_followup_message($pdo, $type, $transcriptsBlob, $messageAngle, $userInput ?: null);
+    // Fixes the "same angle every time" bug — without this, the AI never
+    // knew what had already been sent to this lead, so it kept
+    // converging on the same most-salient detail from the same stored
+    // transcripts every single call. Oldest first, so the prompt reads
+    // as a chronological list.
+    $stmt = $pdo->prepare("
+        SELECT followup_type, generated_message
+        FROM followup_messages
+        WHERE profile_id = ?
+        ORDER BY created_at ASC
+    ");
+    $stmt->execute([$profileId]);
+    $previousMessages = $stmt->fetchAll();
+
+    $result = generate_followup_message($pdo, $type, $transcriptsBlob, $messageAngle, $userInput ?: null, $previousMessages);
 
     if ($result['text'] === null) {
         http_response_code(500);

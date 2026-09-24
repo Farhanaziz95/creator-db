@@ -812,6 +812,7 @@ async function bulkPushSelected() {
         hideLoadingToast();
         notifyInfo(`Pushed ${res.pushed} of ${res.total_attempted} to Flozy.`);
         if (res.failed && res.failed.length) notifyWarning(`${res.failed.length} failed — details in console.`, res.failed);
+        if (res.cross_platform_warnings && res.cross_platform_warnings.length) notifyWarning(`${res.cross_platform_warnings.length} email(s) already linked to a pushed YouTube lead — details in console.`, res.cross_platform_warnings);
         clearSelection(); loadStats();
     }).catch(err => { hideLoadingToast(); notifyError('Bulk push failed.', err); });
 }
@@ -1508,7 +1509,8 @@ function pushOneToFlozy(profileId) {
             const taskNote = res.task_errors && res.task_errors.length ? ` (${res.task_errors.length} task(s) failed, lead itself is fine)` : '';
             const oppNote = res.opportunity_error ? ` ⚠️ Opportunity not created: ${res.opportunity_error}` : ' Opportunity created too.';
             const contactNote = res.contact_error ? ` ⚠️ Contact not created: ${res.contact_error}` : '';
-            status.textContent = `Pushed to Flozy.${taskNote}${oppNote}${contactNote}`;
+            const crossPlatformNote = res.cross_platform_warning ? ` ⚠️ ${res.cross_platform_warning}` : '';
+            status.textContent = `Pushed to Flozy.${taskNote}${oppNote}${contactNote}${crossPlatformNote}`;
             loadStats();
             table.ajax.reload(null, false);
         })

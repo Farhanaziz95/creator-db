@@ -16,23 +16,6 @@ require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/apify_client.php';
 header('Content-Type: application/json');
 
-function get_total_remaining_budget(PDO $pdo): ?float
-{
-    $keys = get_active_apify_keys($pdo);
-    $total = 0.0;
-    $anyKnown = false;
-
-    foreach ($keys as $key) {
-        $budget = check_apify_key_budget($key['api_key']);
-        if ($budget['remaining_usd'] !== null) {
-            $total += $budget['remaining_usd'];
-            $anyKnown = true;
-        }
-    }
-
-    return $anyKnown ? $total : null;
-}
-
 $method = $_SERVER['REQUEST_METHOD'];
 
 if ($method === 'GET') {

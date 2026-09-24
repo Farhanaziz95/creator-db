@@ -18,18 +18,28 @@ if ($action === 'push_selected') {
 
     $pushed = 0;
     $failed = [];
+    $crossPlatformWarnings = [];
 
     foreach ($profileIds as $pid) {
         $result = push_profile_to_flozy($pdo, $pid);
         if ($result['success']) {
             $pushed++;
+            if (!empty($result['cross_platform_warning'])) {
+                $crossPlatformWarnings[] = ['profile_id' => $pid, 'warning' => $result['cross_platform_warning']];
+            }
         } else {
             $failed[] = ['profile_id' => $pid, 'error' => $result['error']];
         }
         usleep(400000);
     }
 
-    echo json_encode(['success' => true, 'pushed' => $pushed, 'total_attempted' => count($profileIds), 'failed' => $failed]);
+    echo json_encode([
+        'success' => true,
+        'pushed' => $pushed,
+        'total_attempted' => count($profileIds),
+        'failed' => $failed,
+        'cross_platform_warnings' => $crossPlatformWarnings,
+    ]);
     exit;
 }
 
